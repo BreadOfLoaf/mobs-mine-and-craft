@@ -77,7 +77,7 @@ public final class SmartBrain {
 	private int coverCooldown;
 
 	// Tool crafting
-	private boolean toolCrafter;
+	boolean toolCrafter;
 	private int toolCraftTimer = -1;
 	private int craftingTicks;
 	private BlockPos craftStation;
@@ -143,6 +143,51 @@ public final class SmartBrain {
 	List<BlockState> trapStates;
 	int trapIndex;
 
+	// Mining & crafting economy (see Industry)
+	int rawIron;
+	int ironIngots;
+	int diamonds;
+	int coal;
+	int stoneMined;
+	final List<ItemStack> loot = new ArrayList<>();
+	boolean diamondTool;
+	Industry.Job job;
+	BlockPos jobStation;
+	boolean jobStarted;
+	int jobTicks;
+	int jobWalk;
+	int jobCooldown;
+	int cookCooldown;
+	boolean brewer;
+	int brewCooldown;
+	int ladders;
+	int stairs;
+	int boats;
+	BlockPos workshopTable;
+	int workshopCheck;
+	int workshopTicks;
+
+	// Digging (see Excavation)
+	Direction stripDir;
+	int stripSteps;
+	BlockPos stripLast;
+	int sinceTorch;
+	int stripCooldown;
+	SmartBrain partyLeader;
+	int partyRole;
+	int torchTicks;
+	Direction breachDir;
+	int breachTicks;
+	BlockPos underminePos;
+	int undermineTicks;
+	int undermineCooldown;
+	int caveCooldown;
+	int climbTicks;
+	BlockPos climbToward;
+	net.minecraft.world.entity.vehicle.boat.Boat boat;
+	int boatTicks;
+	boolean flintGathered;
+
 	public SmartBrain(Mob mob) {
 		this.mob = mob;
 	}
@@ -181,6 +226,11 @@ public final class SmartBrain {
 			this.castleBuilder = true;
 			this.houseBuilder = false;
 		}
+		this.brewer = this.mob instanceof net.minecraft.world.entity.monster.Witch
+			|| (this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.05F);
+		this.brewCooldown = 600 + r.nextInt(1800);
+		this.stripCooldown = 400 + r.nextInt(1200);
+		this.caveCooldown = 200 + r.nextInt(400);
 		Consumable.assign(this, r);
 		MobSpecials.init(this, r);
 	}
@@ -196,6 +246,9 @@ public final class SmartBrain {
 
 		boolean griefing = level.getGameRules().get(GameRules.MOB_GRIEFING);
 		LivingEntity target = this.resolveTarget(level);
+		if (Excavation.tickBoat(this, target)) {
+			return;
+		}
 		boolean canBuild = griefing && BlockWork.canBuild(this.mob) && !this.mob.isPassenger();
 
 		if (target != null) {
@@ -204,7 +257,19 @@ public final class SmartBrain {
 		}
 
 		boolean freeTime = target == null || this.mob.distanceTo(target) > 12.0F;
-		if (freeTime && this.miningPos == null && this.towerRemaining == 0 && this.digRemaining == 0) {
+		boolean handsFree = this.miningPos == null && this.towerRemaining == 0 && this.digRemaining == 0;
+		if (handsFree && Industry.tickJob(this, level, griefing, target)) {
+			return;
+		}
+		if (freeTime && handsFree) {
+			if (this.job == null && this.jobCooldown == 0) {
+				this.jobCooldown = 100;
+				Industry.Job next = Industry.pickIdleJob(this);
+				if (next != null) {
+					Industry.startJob(this, next);
+					return;
+				}
+			}
 			if (this.tickToolCrafting(level, griefing)) {
 				return;
 			}
@@ -244,6 +309,9 @@ public final class SmartBrain {
 			this.tickFlee(level);
 			return;
 		}
+		if (Excavation.tickClimb(this)) {
+			return;
+		}
 		if (this.wallPlan != null) {
 			this.tickWall(level);
 		}
@@ -261,6 +329,10 @@ public final class SmartBrain {
 			if (MobSpecials.trySniper(this, level, target)) {
 				return;
 			}
+			if (Excavation.undermine(this, level, target)) {
+				return;
+			}
+			Excavation.caveIn(this, level, target);
 			if (this.gardener && Gardening.tryTreeTrap(this, level, target)) {
 				return;
 			}
@@ -272,6 +344,15 @@ public final class SmartBrain {
 		}
 
 		if (this.tickCastleGuard()) {
+			return;
+		}
+		if (Industry.tickWorkshop(this, level)) {
+			return;
+		}
+		if (Excavation.tickFollower(this, level)) {
+			return;
+		}
+		if (Excavation.tickStripMine(this, level)) {
 			return;
 		}
 		if (Traps.tick(this, level)) {
@@ -298,6 +379,13 @@ public final class SmartBrain {
 		if (this.wallCooldown > 0) this.wallCooldown--;
 		if (this.punchCooldown > 0) this.punchCooldown--;
 		if (this.trapCooldown > 0) this.trapCooldown--;
+		if (this.jobCooldown > 0) this.jobCooldown--;
+		if (this.cookCooldown > 0) this.cookCooldown--;
+		if (this.brewCooldown > 0) this.brewCooldown--;
+		if (this.stripCooldown > 0) this.stripCooldown--;
+		if (this.undermineCooldown > 0) this.undermineCooldown--;
+		if (this.caveCooldown > 0) this.caveCooldown--;
+		if (this.breachTicks > 0) this.breachTicks--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
 		if (this.gatherCooldown > 0) this.gatherCooldown--;
@@ -382,6 +470,9 @@ public final class SmartBrain {
 		double dy = target.getY() - this.mob.getY();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 
+		if (Excavation.tryClimbAids(this, level, target, dx, dy, dz, horiz)) {
+			return;
+		}
 		if (dy > 1.5 && horiz < 2.5) {
 			this.startTower(Mth.ceil(dy));
 			return;
@@ -393,7 +484,7 @@ public final class SmartBrain {
 		if (horiz < 1.0) {
 			return;
 		}
-		if (!this.stepToward(level, target.position())) {
+		if (!this.stepToward(level, target.position(), Excavation.breachDirection(this, level, dx, dz))) {
 			this.assistTicks = 0;
 		}
 	}
@@ -403,10 +494,12 @@ public final class SmartBrain {
 	 * Returns false if the way is blocked by something unbreakable.
 	 */
 	private boolean stepToward(ServerLevel level, Vec3 goal) {
-		double dx = goal.x - this.mob.getX();
-		double dz = goal.z - this.mob.getZ();
+		return this.stepToward(level, goal, Direction.getApproximateNearest(goal.x - this.mob.getX(), 0.0, goal.z - this.mob.getZ()));
+	}
+
+	/** Like {@link #stepToward(ServerLevel, Vec3)} but walks in the given direction. */
+	boolean stepToward(ServerLevel level, Vec3 goal, Direction dir) {
 		double dy = goal.y - this.mob.getY();
-		Direction dir = Direction.getApproximateNearest(dx, 0.0, dz);
 		BlockPos feet = this.mob.blockPosition();
 		BlockPos next = feet.relative(dir);
 		int height = this.height();
@@ -454,7 +547,7 @@ public final class SmartBrain {
 		return true;
 	}
 
-	private int height() {
+	int height() {
 		return Math.max(1, Mth.ceil(this.mob.getBbHeight()));
 	}
 
@@ -676,10 +769,18 @@ public final class SmartBrain {
 		if (this.miningProgress >= 1.0F) {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, -1);
 			boolean absorb = this.miningAbsorb && BlockWork.isBuildingMaterial(state);
-			level.destroyBlock(this.miningPos, !absorb, this.mob);
+			if (!absorb && BlockWork.isOre(state) && Industry.collectsOres(this)) {
+				Industry.collectOre(this, level, this.miningPos, state);
+			} else {
+				level.destroyBlock(this.miningPos, !absorb, this.mob);
+			}
 			if (absorb) {
 				this.blocks = Math.min(this.blocks + (state.is(BlockTags.LOGS) ? 4 : 1), MAX_STOCK);
+				if (state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(Blocks.COBBLESTONE)) {
+					this.stoneMined++;
+				}
 			}
+			Industry.wearTool(this);
 			this.miningPos = null;
 		} else {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, (int) (this.miningProgress * 10.0F));
@@ -770,31 +871,31 @@ public final class SmartBrain {
 			level.playSound(null, this.mob.blockPosition(), SoundEvents.WOOD_HIT, SoundSource.HOSTILE, 0.8F, 1.0F);
 		}
 		if (this.craftingTicks >= 50) {
-			this.mob.setItemSlot(EquipmentSlot.MAINHAND, randomTool(this.mob.getRandom()));
-			this.mob.setDropChance(EquipmentSlot.MAINHAND, 0.15F);
-			level.playSound(null, this.mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
 			this.craftingTicks = 0;
 			this.toolCraftTimer = -1;
+			ItemStack tool = randomTool(this.mob.getRandom());
+			if (Industry.craftingDuel(this, level)) {
+				tool = Industry.makeTool(Industry.toolKind(tool), Industry.toolTier(tool) + 1);
+			}
+			Industry.equipTool(this, level, tool);
 		}
 		return true;
 	}
 
+	boolean isCraftingTool() {
+		return this.craftingTicks > 0;
+	}
+
+	void stopCrafting() {
+		this.craftingTicks = 0;
+		this.toolCraftTimer = -1;
+	}
+
+	/** First tools are wood or stone; better ones come from mining and smelting (see Industry). */
 	private static ItemStack randomTool(RandomSource r) {
-		int tier = r.nextInt(100);
 		int roll = r.nextInt(4);
 		int kind = roll >= 2 ? 1 : roll; // 50% pickaxe, 25% shovel, 25% axe
-		if (tier < 30) {
-			return new ItemStack(kind == 0 ? Items.WOODEN_SHOVEL : kind == 1 ? Items.WOODEN_PICKAXE : Items.WOODEN_AXE);
-		} else if (tier < 60) {
-			return new ItemStack(kind == 0 ? Items.STONE_SHOVEL : kind == 1 ? Items.STONE_PICKAXE : Items.STONE_AXE);
-		} else if (tier < 72) {
-			return new ItemStack(kind == 0 ? Items.COPPER_SHOVEL : kind == 1 ? Items.COPPER_PICKAXE : Items.COPPER_AXE);
-		} else if (tier < 90) {
-			return new ItemStack(kind == 0 ? Items.IRON_SHOVEL : kind == 1 ? Items.IRON_PICKAXE : Items.IRON_AXE);
-		} else if (tier < 97) {
-			return new ItemStack(kind == 0 ? Items.GOLDEN_SHOVEL : kind == 1 ? Items.GOLDEN_PICKAXE : Items.GOLDEN_AXE);
-		}
-		return new ItemStack(kind == 0 ? Items.DIAMOND_SHOVEL : kind == 1 ? Items.DIAMOND_PICKAXE : Items.DIAMOND_AXE);
+		return Industry.makeTool(kind, r.nextFloat() < 0.6F ? 0 : 1);
 	}
 
 	// ------------------------------------------------------------------ group decoration
@@ -997,7 +1098,8 @@ public final class SmartBrain {
 		BlockPos here = this.mob.blockPosition();
 		if (this.oreCooldown == 0) {
 			this.oreCooldown = 120 + r.nextInt(180);
-			if (level.getNearestPlayer(this.mob, 32.0) != null && r.nextFloat() < 0.85F) {
+			boolean prospector = this.toolCrafter && Industry.toolKind(this.mob.getMainHandItem()) == Industry.PICKAXE;
+			if ((prospector || level.getNearestPlayer(this.mob, 32.0) != null) && r.nextFloat() < 0.85F) {
 				BlockPos ore = BlockWork.findNearestAt(level, here, 8, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
 				if (ore != null) {
 					this.setDigTarget(ore, true);
@@ -1018,7 +1120,11 @@ public final class SmartBrain {
 		return false;
 	}
 
-	private void setDigTarget(BlockPos pos, boolean drops) {
+	boolean hasDigTarget() {
+		return this.digTarget != null;
+	}
+
+	void setDigTarget(BlockPos pos, boolean drops) {
 		this.digTarget = pos;
 		this.digTargetDrops = drops;
 		this.digTimeout = 300;

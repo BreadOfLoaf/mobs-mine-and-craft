@@ -22,6 +22,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.behavior.EntityTracker;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enderman;
@@ -344,6 +345,16 @@ final class MobSpecials {
 			brain.fletchTimer--;
 			return false;
 		}
+		if (brain.fletchTicks == 0 && !brain.flintGathered) {
+			// Dig some gravel for flint first, if there's any around.
+			brain.flintGathered = true;
+			BlockPos gravel = BlockWork.findNearestAt(level, mob.blockPosition(), 8,
+				(p, s) -> s.is(Blocks.GRAVEL) && BlockWork.isExposed(level, p) && BlockWork.canMine(mob, level, p, s));
+			if (gravel != null) {
+				brain.setDigTarget(gravel, false);
+				return false;
+			}
+		}
 		if (brain.fletchTicks == 0) {
 			brain.fletchStation = BlockWork.findNearest(level, mob.blockPosition(), 6, s -> s.is(Blocks.CRAFTING_TABLE));
 			if (brain.fletchStation == null && griefing) {
@@ -370,8 +381,30 @@ final class MobSpecials {
 			brain.fletchTimer = -1;
 			brain.fletchTicks = 0;
 			level.playSound(null, mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
+			shareArrows(brain, level);
 		}
 		return true;
+	}
+
+	/** Arrow factory: tosses spare arrows to up to three nearby skeletons, who then shoot better arrows too. */
+	private static void shareArrows(SmartBrain brain, ServerLevel level) {
+		Mob mob = brain.mob;
+		List<AbstractSkeleton> others = level.getEntitiesOfClass(AbstractSkeleton.class, mob.getBoundingBox().inflate(10.0), s -> s != mob && s.isAlive());
+		int shared = 0;
+		for (AbstractSkeleton other : others) {
+			if (shared >= 3) {
+				break;
+			}
+			Industry.brainOf(other).fletched = true;
+			Vec3 toss = other.position().subtract(mob.position()).scale(0.1).add(0.0, 0.3, 0.0);
+			ItemEntity arrows = new ItemEntity(level, mob.getX(), mob.getEyeY(), mob.getZ(), new ItemStack(Items.ARROW, 4), toss.x, toss.y, toss.z);
+			arrows.setPickUpDelay(20);
+			level.addFreshEntity(arrows);
+			shared++;
+		}
+		if (shared > 0) {
+			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+		}
 	}
 
 	private static void applyBowEnchantments(ServerLevel level, ItemStack bow, RandomSource r) {

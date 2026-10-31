@@ -9,6 +9,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.entity.monster.skeleton.AbstractSkeleton;
@@ -32,6 +33,11 @@ public class MobsMineAndCraft implements ModInitializer {
 				&& arrow.getOwner() instanceof AbstractSkeleton skeleton
 				&& !arrow.entityTags().contains(ARROW_TAG)) {
 				arrow.addTag(ARROW_TAG);
+				// Bows wear out with use; skeletons repair them at anvils when idle.
+				ItemStack bow = skeleton.getMainHandItem();
+				if (bow.isDamageableItem()) {
+					bow.hurtAndBreak(2, skeleton, EquipmentSlot.MAINHAND);
+				}
 				float chance = ((SmartMobHolder) skeleton).mmc$getBrain().isFletched() ? 0.9F : 0.7F;
 				enchantArrow(arrow, level.getRandom(), chance);
 			}

@@ -136,7 +136,7 @@ public enum Consumable {
 		brain.consumableCooldown = 30;
 	}
 
-	private static void give(SmartBrain brain, Consumable type, RandomSource r) {
+	static void give(SmartBrain brain, Consumable type, RandomSource r) {
 		for (Carried c : brain.carried) {
 			if (c.type == type) {
 				c.uses += type.uses;
