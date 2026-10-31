@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "mobsmineandcraft",
+	"version": "${version}",
+	"name": "Minecraft But Mobs Can Mine And Craft",
+	"description": "Mobs are smarter and fight tactically: they mine, bridge, tower, dig, craft tools, build huts and fortifications, and use consumables in combat.",
+	"authors": ["Michael Kovalenko"],
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": ["com.mobsminecraft.MobsMineAndCraft"]
+	},
+	"mixins": ["mobsmineandcraft.mixins.json"],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

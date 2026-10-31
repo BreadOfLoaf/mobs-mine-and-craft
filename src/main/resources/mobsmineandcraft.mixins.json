@@ -1,0 +1,9 @@
+{
+	"required": true,
+	"package": "com.mobsminecraft.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": ["MobMixin"],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

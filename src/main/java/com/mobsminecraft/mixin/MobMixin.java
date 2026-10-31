@@ -1,0 +1,43 @@
+package com.mobsminecraft.mixin;
+
+import com.mobsminecraft.SmartMobHolder;
+import com.mobsminecraft.ai.SmartBrain;
+import net.minecraft.world.entity.Mob;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+@Mixin(Mob.class)
+public abstract class MobMixin implements SmartMobHolder {
+	@Unique
+	private SmartBrain mmc$brain;
+
+	@Override
+	public SmartBrain mmc$getBrain() {
+		if (this.mmc$brain == null) {
+			this.mmc$brain = new SmartBrain((Mob) (Object) this);
+		}
+		return this.mmc$brain;
+	}
+
+	/**
+	 * Runs after goals and navigation have ticked but before the move/look/jump controls apply,
+	 * so the smart brain can override where the mob walks this tick.
+	 */
+	@Inject(
+		method = "serverAiStep",
+		at = @At(
+			value = "INVOKE",
+			target = "Lnet/minecraft/world/entity/Mob;customServerAiStep(Lnet/minecraft/server/level/ServerLevel;)V",
+			shift = At.Shift.AFTER
+		)
+	)
+	private void mmc$tickSmartBrain(CallbackInfo ci) {
+		Mob self = (Mob) (Object) this;
+		if (self.isAlive()) {
+			this.mmc$getBrain().tick();
+		}
+	}
+}

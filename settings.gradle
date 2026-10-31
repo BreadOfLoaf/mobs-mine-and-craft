@@ -1,0 +1,9 @@
+pluginManagement {
+	repositories {
+		maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+		maven { name = 'CentralMirror'; url = 'https://maven-central.storage-download.googleapis.com/maven2/' }
+		mavenCentral()
+		gradlePluginPortal()
+	}
+}
+rootProject.name = 'mobs-mine-and-craft'
