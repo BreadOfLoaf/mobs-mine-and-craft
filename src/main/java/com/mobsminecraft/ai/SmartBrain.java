@@ -45,6 +45,7 @@ public final class SmartBrain {
 	// Building stock (planks, cobblestone, dirt)
 	int blocks;
 	private Block primaryBlock = Blocks.COBBLESTONE;
+	private Block houseWall = Blocks.OAK_PLANKS;
 	private int regenTicks;
 
 	// Consumable
@@ -143,8 +144,42 @@ public final class SmartBrain {
 	List<BlockState> trapStates;
 	int trapIndex;
 
+	// Inventory: picked-up items (see Inventory)
+	final List<ItemStack> loot = new ArrayList<>();
+	int pickupBoostTicks;
+
+	// Underground mining outposts (see Outpost) and cooking (see Furnaces)
+	boolean outpostBuilder;
+	boolean buildingOutpost;
+	int outpostCooldown;
+	int cookCooldown;
+	BlockPos cookPos;
+	int cookTicks;
+
+	// Creeper TNT waiting to be lit (see MobSpecials)
+	final List<BlockPos> unlitTnt = new ArrayList<>();
+	int tntLightTicks;
+
 	public SmartBrain(Mob mob) {
 		this.mob = mob;
+	}
+
+	/** Movement speed modifier: villagers walk at their vanilla pace, everything else at full speed. */
+	double walkSpeed() {
+		return this.mob instanceof net.minecraft.world.entity.npc.villager.AbstractVillager ? 0.5 : 1.0;
+	}
+
+	/** Passive mobs: anything that isn't a monster (animals, villagers, golems...). */
+	boolean isPassive() {
+		return !(this.mob instanceof Enemy);
+	}
+
+	Block primaryBlock() {
+		return this.primaryBlock;
+	}
+
+	public void dropInventory(ServerLevel level) {
+		Inventory.dropAll(this, level);
 	}
 
 	public boolean isBowEnchanted() {
@@ -168,7 +203,18 @@ public final class SmartBrain {
 		this.decorCooldown = 300 + r.nextInt(1200);
 		this.oreCooldown = 100 + r.nextInt(300);
 		this.gatherCooldown = 100 + r.nextInt(300);
-		this.houseBuilder = r.nextFloat() < 0.06F;
+		this.houseBuilder = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.isPassive() ? 0.3F : 0.08F);
+		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
+		this.outpostCooldown = 200 + r.nextInt(600);
+		this.cookCooldown = 400 + r.nextInt(1200);
+		if (this.isPassive()) {
+			this.gatherCooldown = 60 + r.nextInt(200);
+		}
+		// Everything a mob holds or wears drops when it dies, and every mob can pick up gear.
+		for (EquipmentSlot slot : EquipmentSlot.VALUES) {
+			this.mob.setDropChance(slot, 2.0F);
+		}
+		this.mob.setCanPickUpLoot(true);
 		this.gardener = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.mob instanceof Villager ? 0.25F : 0.08F);
 		this.gardenCooldown = 200 + r.nextInt(600);
 		this.toolCrafter = BlockWork.isToolHolder(this.mob) && r.nextFloat() < 0.7F;
@@ -193,6 +239,8 @@ public final class SmartBrain {
 			this.init();
 		}
 		this.tickCooldowns();
+		Inventory.tickPickup(this, level);
+		MobSpecials.tickUnlitTnt(this, level);
 
 		boolean griefing = level.getGameRules().get(GameRules.MOB_GRIEFING);
 		LivingEntity target = this.resolveTarget(level);
@@ -277,7 +325,15 @@ public final class SmartBrain {
 		if (Traps.tick(this, level)) {
 			return;
 		}
+		if (this.housePlan == null && this.outpostBuilder && this.outpostCooldown == 0 && this.mob.onGround()
+			&& Outpost.isUnderground(level, this.mob) && this.mob.getRandom().nextInt(100) == 0) {
+			this.outpostCooldown = 600;
+			Outpost.plan(this, level);
+		}
 		if (this.tickBlueprint(level)) {
+			return;
+		}
+		if (this.isPassive() && Furnaces.tickCooking(this, level, griefing)) {
 			return;
 		}
 		if (this.gardener && Gardening.tryPlant(this, level)) {
@@ -298,6 +354,9 @@ public final class SmartBrain {
 		if (this.wallCooldown > 0) this.wallCooldown--;
 		if (this.punchCooldown > 0) this.punchCooldown--;
 		if (this.trapCooldown > 0) this.trapCooldown--;
+		if (this.pickupBoostTicks > 0) this.pickupBoostTicks--;
+		if (this.outpostCooldown > 0) this.outpostCooldown--;
+		if (this.cookCooldown > 0) this.cookCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
 		if (this.gatherCooldown > 0) this.gatherCooldown--;
@@ -450,7 +509,7 @@ public final class SmartBrain {
 		}
 
 		this.mob.getNavigation().stop();
-		this.mob.getMoveControl().setWantedPosition(next.getX() + 0.5, wantY, next.getZ() + 0.5, 1.0);
+		this.mob.getMoveControl().setWantedPosition(next.getX() + 0.5, wantY, next.getZ() + 0.5, this.walkSpeed());
 		return true;
 	}
 
@@ -486,7 +545,7 @@ public final class SmartBrain {
 	private void tickFlee(ServerLevel level) {
 		this.fleeTicks--;
 		if (this.mob.tickCount % 10 == 0) {
-			this.mob.getNavigation().moveTo(this.fleeGoal.x, this.fleeGoal.y, this.fleeGoal.z, 1.3);
+			this.mob.getNavigation().moveTo(this.fleeGoal.x, this.fleeGoal.y, this.fleeGoal.z, this.walkSpeed() * 1.3);
 		}
 		if (this.mob.position().distanceToSqr(this.fleeGoal) < 4.0) {
 			this.fleeTicks = 0;
@@ -494,7 +553,7 @@ public final class SmartBrain {
 		if (this.fleeTicks == 0) {
 			if (this.fleeFrom != null && this.fleeFrom.isAlive() && this.mob.onGround()) {
 				this.holdStill();
-				this.planWall(level, this.fleeFrom, 1, 1, 2, this.buildState(), false);
+				this.planWall(level, this.fleeFrom, 1, 1 + this.mob.getRandom().nextInt(2), 2 + this.mob.getRandom().nextInt(2), this.buildState(), false);
 			}
 			this.fleeFrom = null;
 		}
@@ -515,7 +574,7 @@ public final class SmartBrain {
 			return;
 		}
 		this.coverCooldown = 300 + r.nextInt(300);
-		this.planWall(level, target, 2, 1, 2, this.buildState(), false);
+		this.planWall(level, target, 2, 1 + r.nextInt(2), 2 + r.nextInt(2), this.buildState(), false);
 	}
 
 	private static boolean isRangedWeapon(ItemStack stack) {
@@ -679,23 +738,27 @@ public final class SmartBrain {
 			level.destroyBlock(this.miningPos, !absorb, this.mob);
 			if (absorb) {
 				this.blocks = Math.min(this.blocks + (state.is(BlockTags.LOGS) ? 4 : 1), MAX_STOCK);
+			} else {
+				// Go pick up what dropped (ores, etc.).
+				this.pickupBoostTicks = 60;
 			}
+			BlockPos broken = this.miningPos;
 			this.miningPos = null;
+			if (state.is(BlockTags.LOGS)) {
+				// Keep chopping the rest of the tree.
+				BlockPos nextLog = BlockWork.findNearestAt(level, broken, 2, (p, st) -> st.is(BlockTags.LOGS) && BlockWork.canMine(this.mob, level, p, st));
+				if (nextLog != null) {
+					this.setDigTarget(nextLog, false);
+				}
+			}
 		} else {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, (int) (this.miningProgress * 10.0F));
 		}
 	}
 
+	/** Each mob builds with one block type, so bridges, towers and walls look consistent. */
 	BlockState buildState() {
-		RandomSource r = this.mob.getRandom();
-		if (r.nextFloat() < 0.7F) {
-			return this.primaryBlock.defaultBlockState();
-		}
-		return switch (r.nextInt(3)) {
-			case 0 -> Blocks.OAK_PLANKS.defaultBlockState();
-			case 1 -> Blocks.COBBLESTONE.defaultBlockState();
-			default -> Blocks.DIRT.defaultBlockState();
-		};
+		return this.primaryBlock.defaultBlockState();
 	}
 
 	/** Places a block if the spot is free. Uses one block from the mob's stock when {@code useStock}. */
@@ -712,6 +775,9 @@ public final class SmartBrain {
 		}
 		level.setBlock(pos, Block.updateFromNeighbourShapes(state, level, pos), Block.UPDATE_ALL);
 		level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
+		if (state.getBlock() instanceof AbstractFurnaceBlock) {
+			Furnaces.load(level, pos, this.mob.getRandom());
+		}
 		this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		return true;
 	}
@@ -755,7 +821,7 @@ public final class SmartBrain {
 		if (this.craftStation != null) {
 			Vec3 c = Vec3.atCenterOf(this.craftStation);
 			if (this.mob.distanceToSqr(c) > 9.0) {
-				this.mob.getNavigation().moveTo(c.x, c.y, c.z, 1.0);
+				this.mob.getNavigation().moveTo(c.x, c.y, c.z, this.walkSpeed());
 				if (++this.craftingTicks > 200) {
 					this.craftStation = null;
 				}
@@ -771,7 +837,7 @@ public final class SmartBrain {
 		}
 		if (this.craftingTicks >= 50) {
 			this.mob.setItemSlot(EquipmentSlot.MAINHAND, randomTool(this.mob.getRandom()));
-			this.mob.setDropChance(EquipmentSlot.MAINHAND, 0.15F);
+			this.mob.setDropChance(EquipmentSlot.MAINHAND, 2.0F);
 			level.playSound(null, this.mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
 			this.craftingTicks = 0;
 			this.toolCraftTimer = -1;
@@ -834,17 +900,17 @@ public final class SmartBrain {
 			return false;
 		}
 		if (this.mob.tickCount % 40 == 0) {
-			this.mob.getNavigation().moveTo(c.x, c.y, c.z, 1.0);
+			this.mob.getNavigation().moveTo(c.x, c.y, c.z, this.walkSpeed());
 		}
 		return true;
 	}
 
 	/** Builds a makeshift house, or a castle for Juggernauts, one block at a time. */
 	private boolean tickBlueprint(ServerLevel level) {
-		if (!(this.houseBuilder || this.castleBuilder) || this.houseBuilt) {
-			return false;
-		}
 		if (this.housePlan == null) {
+			if (!(this.houseBuilder || this.castleBuilder) || this.houseBuilt) {
+				return false;
+			}
 			if (this.mob.tickCount < 200 || !this.mob.onGround() || this.mob.getRandom().nextInt(this.castleBuilder ? 100 : 200) != 0) {
 				return false;
 			}
@@ -865,7 +931,7 @@ public final class SmartBrain {
 		}
 		if (distSq > 1.0) {
 			if (this.mob.tickCount % 10 == 0) {
-				this.mob.getNavigation().moveTo(c.x, c.y, c.z, 1.0);
+				this.mob.getNavigation().moveTo(c.x, c.y, c.z, this.walkSpeed());
 			}
 			return true;
 		}
@@ -878,12 +944,17 @@ public final class SmartBrain {
 			BlockState s = this.houseStates.get(this.houseIndex);
 			this.houseIndex++;
 			this.mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
-			if (this.place(level, p, s, false)) {
+			if (this.placeBlueprintBlock(level, p, s)) {
 				break;
 			}
 		}
 		if (this.houseIndex >= this.housePlan.size()) {
 			this.housePlan = null;
+			if (this.buildingOutpost) {
+				this.buildingOutpost = false;
+				this.outpostCooldown = 2400 + this.mob.getRandom().nextInt(2400);
+				return true;
+			}
 			this.houseBuilt = true;
 			if (this.castleBuilder) {
 				this.castleCenter = this.houseCenter;
@@ -892,58 +963,103 @@ public final class SmartBrain {
 		return true;
 	}
 
+	/**
+	 * Places one blueprint block. {@link Outpost#DIG} means dig the spot out; blocks below the build's base
+	 * (floors, foundations) may replace natural ground; supply chests get filled.
+	 */
+	private boolean placeBlueprintBlock(ServerLevel level, BlockPos pos, BlockState state) {
+		BlockState current = level.getBlockState(pos);
+		if (state == Outpost.DIG) {
+			if (current.canBeReplaced() || !BlockWork.canMine(this.mob, level, pos, current)) {
+				return false;
+			}
+			level.destroyBlock(pos, false, this.mob);
+			this.blocks = Math.min(this.blocks + 1, MAX_STOCK);
+			this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			return true;
+		}
+		if (pos.getY() < this.houseCenter.getY() && !current.canBeReplaced()) {
+			if (!BlockWork.isBuildingMaterial(current) || current.hasBlockEntity() || current.is(state.getBlock())) {
+				return false;
+			}
+			level.setBlock(pos, state, Block.UPDATE_ALL);
+			level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
+			this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			return true;
+		}
+		boolean placed = this.place(level, pos, state, false);
+		if (placed && this.buildingOutpost && state.is(Blocks.CHEST)) {
+			Furnaces.fillSupplyChest(level, pos, this.mob.getRandom());
+		}
+		return placed;
+	}
+
 	private void planHouse(ServerLevel level) {
 		BlockPos center = this.mob.blockPosition();
+		RandomSource r = this.mob.getRandom();
+		int half = 2 + r.nextInt(3);
+		int wallHeight = 3 + r.nextInt(2);
 		int obstacles = 0;
-		for (int x = -2; x <= 2; x++) {
-			for (int z = -2; z <= 2; z++) {
+		for (int x = -half; x <= half; x++) {
+			for (int z = -half; z <= half; z++) {
 				if (!BlockWork.isFloor(level, center.offset(x, -1, z))) {
 					obstacles++;
 				}
-				for (int y = 0; y <= 3; y++) {
+				for (int y = 0; y <= wallHeight; y++) {
 					if (!level.getBlockState(center.offset(x, y, z)).canBeReplaced()) {
 						obstacles++;
 					}
 				}
 			}
 		}
-		if (obstacles > 4) {
+		if (obstacles > half * 2) {
 			return;
 		}
 
-		RandomSource r = this.mob.getRandom();
+		// One material per house.
+		Block[] walls = {Blocks.OAK_PLANKS, Blocks.SPRUCE_PLANKS, Blocks.BIRCH_PLANKS, Blocks.COBBLESTONE, Blocks.STONE_BRICKS, Blocks.MUD_BRICKS};
+		this.houseWall = walls[r.nextInt(walls.length)];
+		Block roof = r.nextBoolean() ? this.houseWall : Blocks.SPRUCE_PLANKS;
 		Direction doorSide = Direction.Plane.HORIZONTAL.getRandomDirection(r);
 		List<BlockPos> plan = new ArrayList<>();
 		List<BlockState> states = new ArrayList<>();
-		for (int y = 0; y <= 2; y++) {
-			for (int x = -2; x <= 2; x++) {
-				for (int z = -2; z <= 2; z++) {
-					boolean edge = Math.abs(x) == 2 || Math.abs(z) == 2;
+		// Floor, replacing the ground inside the walls.
+		for (int x = -half + 1; x < half; x++) {
+			for (int z = -half + 1; z < half; z++) {
+				plan.add(center.offset(x, -1, z));
+				states.add(Blocks.OAK_PLANKS.defaultBlockState());
+			}
+		}
+		for (int y = 0; y < wallHeight; y++) {
+			for (int x = -half; x <= half; x++) {
+				for (int z = -half; z <= half; z++) {
+					boolean edge = Math.abs(x) == half || Math.abs(z) == half;
 					if (!edge) {
 						continue;
 					}
-					boolean door = y <= 1 && x == doorSide.getStepX() * 2 && z == doorSide.getStepZ() * 2;
+					boolean door = y <= 1 && x == doorSide.getStepX() * half && z == doorSide.getStepZ() * half;
 					if (door) {
 						continue;
 					}
-					boolean corner = Math.abs(x) == 2 && Math.abs(z) == 2;
+					boolean corner = Math.abs(x) == half && Math.abs(z) == half;
 					plan.add(center.offset(x, y, z));
 					states.add(corner ? Blocks.OAK_LOG.defaultBlockState() : this.makeshiftState(r));
 				}
 			}
 		}
-		for (int x = -2; x <= 2; x++) {
-			for (int z = -2; z <= 2; z++) {
-				plan.add(center.offset(x, 3, z));
-				states.add(r.nextFloat() < 0.6F ? Blocks.OAK_PLANKS.defaultBlockState() : Blocks.COBBLESTONE.defaultBlockState());
+		for (int x = -half; x <= half; x++) {
+			for (int z = -half; z <= half; z++) {
+				plan.add(center.offset(x, wallHeight, z));
+				states.add(roof.defaultBlockState());
 			}
 		}
 		Direction back = doorSide.getOpposite();
 		Direction side = doorSide.getClockWise();
-		plan.add(center.relative(back).relative(side));
+		int in = half - 1;
+		plan.add(center.relative(back, in).relative(side, in));
 		states.add(Blocks.CRAFTING_TABLE.defaultBlockState());
 		if (r.nextBoolean()) {
-			plan.add(center.relative(back).relative(side.getOpposite()));
+			plan.add(center.relative(back, in).relative(side.getOpposite(), in));
 			states.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, doorSide));
 		}
 
@@ -955,11 +1071,7 @@ public final class SmartBrain {
 	}
 
 	private BlockState makeshiftState(RandomSource r) {
-		return switch (r.nextInt(4)) {
-			case 0, 1 -> this.primaryBlock.defaultBlockState();
-			case 2 -> Blocks.OAK_PLANKS.defaultBlockState();
-			default -> Blocks.COBBLESTONE.defaultBlockState();
-		};
+		return this.houseWall.defaultBlockState();
 	}
 
 	// ------------------------------------------------------------------ mining: ores and gathering
@@ -973,7 +1085,8 @@ public final class SmartBrain {
 				return false;
 			}
 			Vec3 c = Vec3.atCenterOf(this.digTarget);
-			if (this.mob.distanceToSqr(c) <= 9.0) {
+			double reachSq = state.is(BlockTags.LOGS) ? 20.0 : 9.0;
+			if (this.mob.distanceToSqr(c) <= reachSq) {
 				this.startMining(this.digTarget, !this.digTargetDrops);
 				this.digTarget = null;
 				return true;
@@ -996,18 +1109,24 @@ public final class SmartBrain {
 		RandomSource r = this.mob.getRandom();
 		BlockPos here = this.mob.blockPosition();
 		if (this.oreCooldown == 0) {
-			this.oreCooldown = 120 + r.nextInt(180);
-			if (level.getNearestPlayer(this.mob, 32.0) != null && r.nextFloat() < 0.85F) {
-				BlockPos ore = BlockWork.findNearestAt(level, here, 8, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
+			this.oreCooldown = 100 + r.nextInt(150);
+			if (r.nextFloat() < 0.85F) {
+				BlockPos ore = BlockWork.findNearestAt(level, here, 10, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
 				if (ore != null) {
 					this.setDigTarget(ore, true);
 					return true;
 				}
 			}
 		}
-		if (this.gatherCooldown == 0 && this.blocks < 64) {
-			this.gatherCooldown = 200 + r.nextInt(300);
-			BlockPos log = BlockWork.findNearestAt(level, here, 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
+		boolean passive = this.isPassive();
+		if (this.gatherCooldown == 0 && this.blocks < (passive ? 112 : 64)) {
+			this.gatherCooldown = passive ? 80 + r.nextInt(160) : 200 + r.nextInt(300);
+			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
+			if (log == null && passive) {
+				// Passive mobs quarry stone into cobblestone.
+				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> (st.is(BlockTags.BASE_STONE_OVERWORLD) || st.is(Blocks.COBBLESTONE))
+					&& BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, st));
+			}
 			BlockPos pick = log != null ? log : BlockWork.findNearestAt(level, here, 3,
 				(p, s) -> BlockWork.isBuildingMaterial(s) && BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, s));
 			if (pick != null) {
@@ -1018,7 +1137,7 @@ public final class SmartBrain {
 		return false;
 	}
 
-	private void setDigTarget(BlockPos pos, boolean drops) {
+	void setDigTarget(BlockPos pos, boolean drops) {
 		this.digTarget = pos;
 		this.digTargetDrops = drops;
 		this.digTimeout = 300;

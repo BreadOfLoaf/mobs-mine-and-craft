@@ -136,6 +136,17 @@ public enum Consumable {
 		brain.consumableCooldown = 30;
 	}
 
+	/** Adds picked-up consumables (counted in uses) to what the mob carries. */
+	static void addCarried(SmartBrain brain, Consumable type, int uses, Holder<Potion> potion) {
+		for (Carried c : brain.carried) {
+			if (c.type == type && (potion == null || potion.equals(c.potion))) {
+				c.uses += uses;
+				return;
+			}
+		}
+		brain.carried.add(new Carried(type, uses, potion));
+	}
+
 	private static void give(SmartBrain brain, Consumable type, RandomSource r) {
 		for (Carried c : brain.carried) {
 			if (c.type == type) {

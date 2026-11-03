@@ -64,7 +64,7 @@ public final class BlockWork {
 		if (hardness < 0.0F || hardness > 20.0F || state.is(Blocks.BEDROCK)) {
 			return false;
 		}
-		return !state.requiresCorrectToolForDrops() || mob.getMainHandItem().isCorrectToolForDrops(state);
+		return !state.requiresCorrectToolForDrops() || tool(mob).isCorrectToolForDrops(state);
 	}
 
 	/** Fraction of the block broken per tick, modelled on the player formula but a bit faster. */
@@ -73,10 +73,24 @@ public final class BlockWork {
 		if (hardness <= 0.0F) {
 			return 1.0F;
 		}
-		ItemStack tool = mob.getMainHandItem();
+		ItemStack tool = tool(mob);
 		float speed = Math.max(1.0F, tool.getDestroySpeed(state));
 		boolean correct = !state.requiresCorrectToolForDrops() || tool.isCorrectToolForDrops(state);
 		return 1.5F * speed / hardness / (correct ? 30.0F : 100.0F);
+	}
+
+	private static final ItemStack PASSIVE_TOOL = new ItemStack(net.minecraft.world.item.Items.STONE_PICKAXE);
+
+	/**
+	 * The tool a mob mines with: what it holds, or for empty-handed passive mobs (animals, villagers...)
+	 * a stand-in stone pickaxe, so they can quarry cobblestone and basic ores. Monsters need a real pickaxe.
+	 */
+	static ItemStack tool(Mob mob) {
+		ItemStack held = mob.getMainHandItem();
+		if (held.isEmpty() && !(mob instanceof net.minecraft.world.entity.monster.Enemy)) {
+			return PASSIVE_TOOL;
+		}
+		return held;
 	}
 
 	/** Blocks that the mob keeps for its own building stock instead of dropping. */

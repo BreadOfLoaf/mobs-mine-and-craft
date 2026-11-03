@@ -37,15 +37,19 @@ public class MobsMineAndCraft implements ModInitializer {
 			}
 		});
 
-		// Skeletons with an enchanted bow sometimes drop it at half durability.
+		// Mobs drop everything they carry. An enchanted skeleton bow always drops, sometimes at half durability.
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
-			if (entity instanceof AbstractSkeleton skeleton
-				&& entity.level() instanceof ServerLevel level
-				&& ((SmartMobHolder) skeleton).mmc$getBrain().isBowEnchanted()) {
+			if (!(entity instanceof SmartMobHolder holder) || !(entity.level() instanceof ServerLevel level)) {
+				return;
+			}
+			holder.mmc$getBrain().dropInventory(level);
+			if (entity instanceof AbstractSkeleton skeleton && holder.mmc$getBrain().isBowEnchanted()) {
 				ItemStack bow = skeleton.getMainHandItem();
-				if (bow.is(Items.BOW) && level.getRandom().nextFloat() < 0.4F) {
+				if (bow.is(Items.BOW)) {
 					ItemStack drop = bow.copy();
-					drop.setDamageValue(drop.getMaxDamage() / 2);
+					if (level.getRandom().nextFloat() < 0.4F) {
+						drop.setDamageValue(drop.getMaxDamage() / 2);
+					}
 					skeleton.spawnAtLocation(level, drop);
 				}
 			}

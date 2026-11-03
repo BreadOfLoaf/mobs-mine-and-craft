@@ -54,7 +54,7 @@ final class Traps {
 		}
 		if (mob.distanceToSqr(c) > 12.0) {
 			if (mob.tickCount % 10 == 0) {
-				mob.getNavigation().moveTo(c.x, c.y, c.z, 1.0);
+				mob.getNavigation().moveTo(c.x, c.y, c.z, brain.walkSpeed());
 			}
 			return true;
 		}
@@ -84,10 +84,12 @@ final class Traps {
 		Direction first = Direction.Plane.HORIZONTAL.getRandomDirection(mob.getRandom());
 		Direction dir = null;
 		List<BlockPos> positions = null;
+		int wires = 2 + mob.getRandom().nextInt(4);
+		int length = wires + 4;
 		for (int turn = 0; turn < 4 && positions == null; turn++) {
 			Direction d = turn == 0 ? first : first.getClockWise();
 			first = d;
-			positions = line(level, mob.blockPosition().relative(d, 2), d);
+			positions = line(level, mob.blockPosition().relative(d, 2), d, length);
 			dir = d;
 		}
 		if (positions == null) {
@@ -104,13 +106,13 @@ final class Traps {
 		List<BlockState> states = new ArrayList<>();
 		plan.add(positions.get(0));
 		states.add(Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, dir));
-		plan.add(positions.get(6));
+		plan.add(positions.get(length - 1));
 		states.add(Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, back));
 		plan.add(positions.get(1));
 		states.add(Blocks.TRIPWIRE_HOOK.defaultBlockState().setValue(TripWireHookBlock.FACING, dir));
-		plan.add(positions.get(5));
+		plan.add(positions.get(length - 2));
 		states.add(Blocks.TRIPWIRE_HOOK.defaultBlockState().setValue(TripWireHookBlock.FACING, back));
-		for (int i = 2; i <= 4; i++) {
+		for (int i = 2; i <= length - 3; i++) {
 			plan.add(positions.get(i));
 			states.add(wire);
 		}
@@ -119,10 +121,10 @@ final class Traps {
 		brain.trapIndex = 0;
 	}
 
-	/** Seven open floor spots in a row, or null if the line is blocked. */
-	private static List<BlockPos> line(ServerLevel level, BlockPos start, Direction dir) {
+	/** {@code length} open floor spots in a row, or null if the line is blocked. */
+	private static List<BlockPos> line(ServerLevel level, BlockPos start, Direction dir, int length) {
 		List<BlockPos> positions = new ArrayList<>();
-		for (int i = 0; i < 7; i++) {
+		for (int i = 0; i < length; i++) {
 			BlockPos p = start.relative(dir, i);
 			if (!level.getBlockState(p).canBeReplaced() || !level.getFluidState(p).isEmpty() || !BlockWork.isFloor(level, p.below())) {
 				return null;

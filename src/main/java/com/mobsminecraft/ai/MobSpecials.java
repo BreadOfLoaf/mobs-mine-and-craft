@@ -36,6 +36,7 @@ import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.TntBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.phys.Vec3;
@@ -185,19 +186,39 @@ final class MobSpecials {
 			for (int i = 0; i < 3 && !BlockWork.isFloor(level, p.below()); i++) {
 				p = p.below();
 			}
-			if (!level.getBlockState(p).canBeReplaced()) {
+			// Place an unlit TNT block; the creeper lights it a moment later (see tickUnlitTnt).
+			if (!brain.place(level, p, Blocks.TNT.defaultBlockState(), false)) {
 				continue;
 			}
-			PrimedTnt tnt = new PrimedTnt(level, p.getX() + 0.5, p.getY(), p.getZ() + 0.5, mob);
-			tnt.setFuse(50 + r.nextInt(30));
-			level.addFreshEntity(tnt);
-			level.playSound(null, tnt.getX(), tnt.getY(), tnt.getZ(), SoundEvents.TNT_PRIMED, SoundSource.HOSTILE, 1.0F, 1.0F);
-			level.gameEvent(mob, GameEvent.PRIME_FUSE, p);
+			brain.unlitTnt.add(p);
 			placed++;
 		}
 		if (placed > 0) {
-			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			brain.tntLightTicks = 20 + r.nextInt(20);
 		}
+	}
+
+	/**
+	 * Lights the creeper's placed TNT with flint and steel. If the player breaks the TNT first,
+	 * or the creeper dies or wanders off, it stays unlit.
+	 */
+	static void tickUnlitTnt(SmartBrain brain, ServerLevel level) {
+		if (brain.unlitTnt.isEmpty() || --brain.tntLightTicks > 0) {
+			return;
+		}
+		Mob mob = brain.mob;
+		for (BlockPos p : brain.unlitTnt) {
+			if (!level.getBlockState(p).is(Blocks.TNT) || mob.distanceToSqr(Vec3.atCenterOf(p)) > 100.0) {
+				continue;
+			}
+			mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
+			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			level.playSound(null, p, SoundEvents.FLINTANDSTEEL_USE, SoundSource.HOSTILE, 1.0F, 1.0F);
+			if (TntBlock.prime(level, p, mob, new ItemStack(Items.FLINT_AND_STEEL))) {
+				level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL_IMMEDIATE);
+			}
+		}
+		brain.unlitTnt.clear();
 	}
 
 	// ------------------------------------------------------------------ skeletons
@@ -211,7 +232,7 @@ final class MobSpecials {
 		RandomSource r = mob.getRandom();
 		brain.wallCooldown = 500 + r.nextInt(400);
 
-		brain.planWall(level, target, 2, 2, 1, Blocks.COBBLESTONE.defaultBlockState(), true);
+		brain.planWall(level, target, 2, 1 + r.nextInt(3), 1 + r.nextInt(2), Blocks.COBBLESTONE.defaultBlockState(), true);
 	}
 
 	/**
@@ -309,7 +330,7 @@ final class MobSpecials {
 		}
 		Vec3 focus = brain.enchantTable != null ? Vec3.atCenterOf(brain.enchantTable) : mob.getEyePosition();
 		if (brain.enchantTable != null && mob.distanceToSqr(focus) > 9.0) {
-			mob.getNavigation().moveTo(focus.x, focus.y, focus.z, 1.0);
+			mob.getNavigation().moveTo(focus.x, focus.y, focus.z, brain.walkSpeed());
 			if (++brain.enchantTicks > 200) {
 				brain.enchantTable = null;
 			}
@@ -352,7 +373,7 @@ final class MobSpecials {
 		}
 		Vec3 focus = brain.fletchStation != null ? Vec3.atCenterOf(brain.fletchStation) : mob.getEyePosition();
 		if (brain.fletchStation != null && mob.distanceToSqr(focus) > 9.0) {
-			mob.getNavigation().moveTo(focus.x, focus.y, focus.z, 1.0);
+			mob.getNavigation().moveTo(focus.x, focus.y, focus.z, brain.walkSpeed());
 			if (++brain.fletchTicks > 200) {
 				brain.fletchStation = null;
 			}
@@ -392,7 +413,7 @@ final class MobSpecials {
 
 	private static void villagerAttack(SmartBrain brain, ServerLevel level, Villager villager, LivingEntity target) {
 		if (villager.tickCount % 20 == 0) {
-			villager.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(target, 0.6F, 3));
+			villager.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(target, 0.5F, 3));
 			villager.getBrain().setMemory(MemoryModuleType.LOOK_TARGET, new EntityTracker(target, true));
 		}
 		if (brain.punchCooldown == 0 && villager.distanceTo(target) < 1.8F) {

@@ -13,29 +13,30 @@ import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * A small stone fort a Juggernaut builds for itself: 9x9 walls with crenellations, corner towers,
+ * A small stone fort a Juggernaut builds for itself: walls (7x7 up to 13x13) with crenellations, corner towers,
  * a gate, a red carpet up to a throne, and a crafting table and furnace inside.
  */
 final class Castle {
-	private static final int R = 4;
-	private static final int WALL_HEIGHT = 4;
-
 	private Castle() {}
 
 	static void plan(SmartBrain brain, ServerLevel level) {
 		BlockPos c = brain.mob.blockPosition();
 		RandomSource r = brain.mob.getRandom();
+		// Size and material vary from castle to castle.
+		int radius = 3 + r.nextInt(4);
+		int wallHeight = 3 + r.nextInt(3);
+		BlockState wall = wallBlock(r);
 
 		int bad = 0;
-		for (int x = -R; x <= R; x++) {
-			for (int z = -R; z <= R; z++) {
-				if (!isPerimeter(x, z)) {
+		for (int x = -radius; x <= radius; x++) {
+			for (int z = -radius; z <= radius; z++) {
+				if (!isPerimeter(x, z, radius)) {
 					continue;
 				}
 				if (!BlockWork.isFloor(level, c.offset(x, -1, z))) {
 					bad++;
 				}
-				for (int y = 0; y < WALL_HEIGHT; y++) {
+				for (int y = 0; y < wallHeight; y++) {
 					if (!level.getBlockState(c.offset(x, y, z)).canBeReplaced()) {
 						bad++;
 					}
@@ -53,48 +54,48 @@ final class Castle {
 		List<BlockState> states = new ArrayList<>();
 
 		// Foundations where the ground dips.
-		for (int x = -R; x <= R; x++) {
-			for (int z = -R; z <= R; z++) {
-				if (isPerimeter(x, z) && !BlockWork.isFloor(level, c.offset(x, -1, z))) {
+		for (int x = -radius; x <= radius; x++) {
+			for (int z = -radius; z <= radius; z++) {
+				if (isPerimeter(x, z, radius) && !BlockWork.isFloor(level, c.offset(x, -1, z))) {
 					plan.add(c.offset(x, -1, z));
 					states.add(Blocks.COBBLESTONE.defaultBlockState());
 				}
 			}
 		}
 		// Walls, laid course by course so the castle visibly rises.
-		for (int y = 0; y < WALL_HEIGHT; y++) {
-			for (int x = -R; x <= R; x++) {
-				for (int z = -R; z <= R; z++) {
-					if (!isPerimeter(x, z)) {
+		for (int y = 0; y < wallHeight; y++) {
+			for (int x = -radius; x <= radius; x++) {
+				for (int z = -radius; z <= radius; z++) {
+					if (!isPerimeter(x, z, radius)) {
 						continue;
 					}
-					boolean gateway = y <= 2 && x == gate.getStepX() * R && z == gate.getStepZ() * R;
+					boolean gateway = y <= 2 && x == gate.getStepX() * radius && z == gate.getStepZ() * radius;
 					if (!gateway) {
 						plan.add(c.offset(x, y, z));
-						states.add(wallBlock(r));
+						states.add(wall);
 					}
 				}
 			}
 		}
 		// Crenellations on top, and taller corner towers.
-		for (int x = -R; x <= R; x++) {
-			for (int z = -R; z <= R; z++) {
-				if (isPerimeter(x, z) && (x + z) % 2 == 0) {
-					plan.add(c.offset(x, WALL_HEIGHT, z));
+		for (int x = -radius; x <= radius; x++) {
+			for (int z = -radius; z <= radius; z++) {
+				if (isPerimeter(x, z, radius) && (x + z) % 2 == 0) {
+					plan.add(c.offset(x, wallHeight, z));
 					states.add(Blocks.STONE_BRICKS.defaultBlockState());
 				}
 			}
 		}
-		for (int x = -R; x <= R; x += 2 * R) {
-			for (int z = -R; z <= R; z += 2 * R) {
-				for (int y = WALL_HEIGHT + 1; y <= WALL_HEIGHT + 2; y++) {
+		for (int x = -radius; x <= radius; x += 2 * radius) {
+			for (int z = -radius; z <= radius; z += 2 * radius) {
+				for (int y = wallHeight + 1; y <= wallHeight + 2; y++) {
 					plan.add(c.offset(x, y, z));
 					states.add(Blocks.COBBLESTONE.defaultBlockState());
 				}
 			}
 		}
 		// Red carpet from the gate to the throne.
-		for (int k = R - 1; k >= -1; k--) {
+		for (int k = radius - 1; k >= -1; k--) {
 			plan.add(c.relative(gate, k));
 			states.add(Blocks.CARPET.pick(DyeColor.RED).defaultBlockState());
 		}
@@ -105,9 +106,9 @@ final class Castle {
 		states.add(Blocks.TORCH.defaultBlockState());
 		plan.add(throne.relative(side.getOpposite()));
 		states.add(Blocks.TORCH.defaultBlockState());
-		plan.add(c.relative(side, R - 1));
+		plan.add(c.relative(side, radius - 1));
 		states.add(Blocks.CRAFTING_TABLE.defaultBlockState());
-		plan.add(c.relative(side.getOpposite(), R - 1));
+		plan.add(c.relative(side.getOpposite(), radius - 1));
 		states.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, side).setValue(AbstractFurnaceBlock.LIT, true));
 
 		brain.housePlan = plan;
@@ -117,8 +118,8 @@ final class Castle {
 		brain.buildInterval = 3;
 	}
 
-	private static boolean isPerimeter(int x, int z) {
-		return Math.abs(x) == R || Math.abs(z) == R;
+	private static boolean isPerimeter(int x, int z, int radius) {
+		return Math.abs(x) == radius || Math.abs(z) == radius;
 	}
 
 	private static BlockState wallBlock(RandomSource r) {
