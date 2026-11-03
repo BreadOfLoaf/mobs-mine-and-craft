@@ -6,6 +6,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -26,7 +27,10 @@ public final class Inventory {
 
 	// ------------------------------------------------------------------ picking up
 
-	/** Picks up nearby items. Equipment the mob wants is left to vanilla, which equips it. */
+	/**
+	 * Picks up nearby items. Gear (weapons, tools, armour) is equipped if it's an upgrade; everything
+	 * else goes into the inventory, so mobs don't walk around holding coal or dirt.
+	 */
 	static void tickPickup(SmartBrain brain, ServerLevel level) {
 		Mob mob = brain.mob;
 		boolean boosted = brain.pickupBoostTicks > 0;
@@ -39,7 +43,18 @@ public final class Inventory {
 		for (ItemEntity entity : items) {
 			ItemStack stack = entity.getItem();
 			if (mob.canPickUpLoot() && mob.wantsToPickUp(level, stack)) {
-				continue;
+				continue; // villagers and piglins handle their own pickups
+			}
+			if (isGear(stack)) {
+				ItemStack equipped = mob.equipItemIfPossible(level, stack.copy());
+				if (!equipped.isEmpty()) {
+					mob.take(entity, equipped.getCount());
+					stack.shrink(equipped.getCount());
+					if (stack.isEmpty()) {
+						entity.discard();
+					}
+					continue;
+				}
 			}
 			if (!store(brain, stack.copy())) {
 				continue;
@@ -48,6 +63,13 @@ public final class Inventory {
 			entity.discard();
 			level.playSound(null, mob.getX(), mob.getY(), mob.getZ(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.3F, 1.4F);
 		}
+	}
+
+	private static boolean isGear(ItemStack stack) {
+		return stack.has(net.minecraft.core.component.DataComponents.TOOL)
+			|| stack.has(net.minecraft.core.component.DataComponents.WEAPON)
+			|| stack.has(net.minecraft.core.component.DataComponents.EQUIPPABLE)
+			|| stack.is(Items.BOW) || stack.is(Items.CROSSBOW);
 	}
 
 	/** Puts an item into the mob's inventory. Returns false if there's no room. */
@@ -84,27 +106,35 @@ public final class Inventory {
 
 	// ------------------------------------------------------------------ dropping
 
-	/** Drops the whole inventory: loot, consumables, and building blocks. Equipment drops through vanilla. */
+	/**
+	 * Drops a realistic share of the inventory: everything it picked up, a handful of building blocks,
+	 * one to three of each consumable, and sometimes its spare pickaxe. Equipment drops through vanilla.
+	 */
 	public static void dropAll(SmartBrain brain, ServerLevel level) {
 		Mob mob = brain.mob;
+		RandomSource r = mob.getRandom();
 		for (ItemStack stack : brain.loot) {
 			mob.spawnAtLocation(level, stack);
 		}
 		brain.loot.clear();
 		for (Consumable.Carried c : brain.carried) {
 			for (ItemStack stack : toItems(c)) {
+				if (stack.getMaxStackSize() > 1) {
+					stack.setCount(Math.min(stack.getCount(), 1 + r.nextInt(3)));
+				}
 				mob.spawnAtLocation(level, stack);
+				break;
 			}
 		}
 		brain.carried.clear();
-		Item blockItem = brain.primaryBlock().asItem();
-		int remaining = brain.blocks;
-		while (remaining > 0) {
-			int n = Math.min(64, remaining);
-			mob.spawnAtLocation(level, new ItemStack(blockItem, n));
-			remaining -= n;
+		int blocks = Math.min(brain.blocks, 3 + r.nextInt(6));
+		if (blocks > 0) {
+			mob.spawnAtLocation(level, new ItemStack(brain.primaryBlock().asItem(), blocks));
 		}
 		brain.blocks = 0;
+		if (!brain.pickaxe.isEmpty() && r.nextFloat() < 0.25F) {
+			mob.spawnAtLocation(level, brain.pickaxe.copy());
+		}
 	}
 
 	// ------------------------------------------------------------------ consumables <-> items

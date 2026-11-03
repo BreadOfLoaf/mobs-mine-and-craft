@@ -366,7 +366,7 @@ final class MobSpecials {
 			return false;
 		}
 		if (brain.fletchTicks == 0) {
-			brain.fletchStation = BlockWork.findNearest(level, mob.blockPosition(), 6, s -> s.is(Blocks.CRAFTING_TABLE));
+			brain.fletchStation = BlockWork.findNearest(level, mob.blockPosition(), 10, s -> s.is(Blocks.CRAFTING_TABLE));
 			if (brain.fletchStation == null && griefing) {
 				brain.fletchStation = brain.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
 			}
@@ -413,7 +413,7 @@ final class MobSpecials {
 
 	private static void villagerAttack(SmartBrain brain, ServerLevel level, Villager villager, LivingEntity target) {
 		if (villager.tickCount % 20 == 0) {
-			villager.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(target, 0.5F, 3));
+			villager.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(target, 0.6F, 3));
 			villager.getBrain().setMemory(MemoryModuleType.LOOK_TARGET, new EntityTracker(target, true));
 		}
 		if (brain.punchCooldown == 0 && villager.distanceTo(target) < 1.8F) {

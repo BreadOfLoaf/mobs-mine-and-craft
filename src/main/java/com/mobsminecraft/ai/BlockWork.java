@@ -64,7 +64,11 @@ public final class BlockWork {
 		if (hardness < 0.0F || hardness > 20.0F || state.is(Blocks.BEDROCK)) {
 			return false;
 		}
-		return !state.requiresCorrectToolForDrops() || tool(mob).isCorrectToolForDrops(state);
+		// Never break what mobs built (their houses, bridges, outposts).
+		if (com.mobsminecraft.world.MobBuilt.contains(level, pos)) {
+			return false;
+		}
+		return !state.requiresCorrectToolForDrops() || tool(mob, state).isCorrectToolForDrops(state);
 	}
 
 	/** Fraction of the block broken per tick, modelled on the player formula but a bit faster. */
@@ -73,7 +77,7 @@ public final class BlockWork {
 		if (hardness <= 0.0F) {
 			return 1.0F;
 		}
-		ItemStack tool = tool(mob);
+		ItemStack tool = tool(mob, state);
 		float speed = Math.max(1.0F, tool.getDestroySpeed(state));
 		boolean correct = !state.requiresCorrectToolForDrops() || tool.isCorrectToolForDrops(state);
 		return 1.5F * speed / hardness / (correct ? 30.0F : 100.0F);
@@ -85,12 +89,35 @@ public final class BlockWork {
 	 * The tool a mob mines with: what it holds, or for empty-handed passive mobs (animals, villagers...)
 	 * a stand-in stone pickaxe, so they can quarry cobblestone and basic ores. Monsters need a real pickaxe.
 	 */
-	static ItemStack tool(Mob mob) {
+	static ItemStack tool(Mob mob, BlockState state) {
 		ItemStack held = mob.getMainHandItem();
+		if (held.isCorrectToolForDrops(state) || held.getDestroySpeed(state) > 1.0F) {
+			return held;
+		}
+		// Zombies and skeletons carry a pickaxe they switch to for stone and ores.
+		ItemStack pickaxe = ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain().pickaxe;
+		if (!pickaxe.isEmpty() && (pickaxe.isCorrectToolForDrops(state) || pickaxe.getDestroySpeed(state) > 1.0F)) {
+			return pickaxe;
+		}
 		if (held.isEmpty() && !(mob instanceof net.minecraft.world.entity.monster.Enemy)) {
 			return PASSIVE_TOOL;
 		}
 		return held;
+	}
+
+	/**
+	 * Natural terrain mobs may gather: dirt, stone, sand, gravel, and logs that are part of a tree
+	 * (leaves nearby). Planks, cobblestone, bricks and anything mobs built are left alone.
+	 */
+	public static boolean isNatural(ServerLevel level, BlockPos pos, BlockState state) {
+		if (com.mobsminecraft.world.MobBuilt.contains(level, pos)) {
+			return false;
+		}
+		if (state.is(BlockTags.LOGS)) {
+			return findNearest(level, pos, 2, s -> s.is(BlockTags.LEAVES)) != null;
+		}
+		return state.is(BlockTags.DIRT) || state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.BASE_STONE_NETHER)
+			|| state.is(BlockTags.SAND) || state.is(Blocks.GRAVEL);
 	}
 
 	/** Blocks that the mob keeps for its own building stock instead of dropping. */

@@ -23,7 +23,13 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.SwingAnimation;
+import com.mobsminecraft.world.MobBuilt;
+import net.minecraft.world.level.block.AbstractBedBlock;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.properties.BedPart;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -156,6 +162,15 @@ public final class SmartBrain {
 	BlockPos cookPos;
 	int cookTicks;
 
+	// Pickaxe zombies and skeletons carry for mining; their usual item is stashed while it's out
+	ItemStack pickaxe = ItemStack.EMPTY;
+	private ItemStack stashedHand;
+
+	// Passive mobs build houses out of the wood they chop
+	int logsChopped;
+	Block woodLog = Blocks.OAK_LOG;
+	int houseCooldown;
+
 	// Creeper TNT waiting to be lit (see MobSpecials)
 	final List<BlockPos> unlitTnt = new ArrayList<>();
 	int tntLightTicks;
@@ -164,9 +179,9 @@ public final class SmartBrain {
 		this.mob = mob;
 	}
 
-	/** Movement speed modifier: villagers walk at their vanilla pace, everything else at full speed. */
+	/** Movement speed modifier for everything mobs walk to on their own. */
 	double walkSpeed() {
-		return this.mob instanceof net.minecraft.world.entity.npc.villager.AbstractVillager ? 0.5 : 1.0;
+		return 1.0;
 	}
 
 	/** Passive mobs: anything that isn't a monster (animals, villagers, golems...). */
@@ -214,7 +229,8 @@ public final class SmartBrain {
 		for (EquipmentSlot slot : EquipmentSlot.VALUES) {
 			this.mob.setDropChance(slot, 2.0F);
 		}
-		this.mob.setCanPickUpLoot(true);
+		boolean vanillaPickup = this.mob instanceof Villager || this.mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin;
+		this.mob.setCanPickUpLoot(vanillaPickup);
 		this.gardener = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.mob instanceof Villager ? 0.25F : 0.08F);
 		this.gardenCooldown = 200 + r.nextInt(600);
 		this.toolCrafter = BlockWork.isToolHolder(this.mob) && r.nextFloat() < 0.7F;
@@ -223,6 +239,11 @@ public final class SmartBrain {
 		}
 		this.trapBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
 		Juggernaut.roll(this.mob, r);
+		if ((this.mob instanceof net.minecraft.world.entity.monster.zombie.Zombie
+			|| this.mob instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) && r.nextFloat() < 0.75F) {
+			float t = r.nextFloat();
+			this.pickaxe = new ItemStack(t < 0.1F ? Items.WOODEN_PICKAXE : t < 0.6F ? Items.STONE_PICKAXE : t < 0.95F ? Items.IRON_PICKAXE : Items.DIAMOND_PICKAXE);
+		}
 		if (Juggernaut.isJuggernaut(this.mob) && r.nextFloat() < 0.6F) {
 			this.castleBuilder = true;
 			this.houseBuilder = false;
@@ -240,6 +261,9 @@ public final class SmartBrain {
 		}
 		this.tickCooldowns();
 		Inventory.tickPickup(this, level);
+		if (this.miningPos == null && this.stashedHand != null) {
+			this.restoreHand();
+		}
 		MobSpecials.tickUnlitTnt(this, level);
 
 		boolean griefing = level.getGameRules().get(GameRules.MOB_GRIEFING);
@@ -313,6 +337,9 @@ public final class SmartBrain {
 				return;
 			}
 			this.tryCoverWall(level, target);
+			if (this.mob.distanceTo(target) > 16.0F && !this.pickaxe.isEmpty() && this.tickDigTarget(level)) {
+				return;
+			}
 			if (this.isChaser(target)) {
 				this.chaseAssist(level, target);
 			}
@@ -329,6 +356,14 @@ public final class SmartBrain {
 			&& Outpost.isUnderground(level, this.mob) && this.mob.getRandom().nextInt(100) == 0) {
 			this.outpostCooldown = 600;
 			Outpost.plan(this, level);
+		}
+		if (this.housePlan == null && this.isPassive() && this.logsChopped >= 5 && this.houseCooldown == 0
+			&& this.mob.onGround() && this.mob.getRandom().nextInt(40) == 0) {
+			if (Houses.plan(this, level, Houses.forLog(this.woodLog))) {
+				this.logsChopped = 0;
+			} else {
+				this.houseCooldown = 200;
+			}
 		}
 		if (this.tickBlueprint(level)) {
 			return;
@@ -357,6 +392,7 @@ public final class SmartBrain {
 		if (this.pickupBoostTicks > 0) this.pickupBoostTicks--;
 		if (this.outpostCooldown > 0) this.outpostCooldown--;
 		if (this.cookCooldown > 0) this.cookCooldown--;
+		if (this.houseCooldown > 0) this.houseCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
 		if (this.gatherCooldown > 0) this.gatherCooldown--;
@@ -709,6 +745,7 @@ public final class SmartBrain {
 		this.miningProgress = 0.0F;
 		this.miningAbsorb = absorb;
 		this.mob.getNavigation().stop();
+		this.takeOutPickaxeFor(this.mob.level().getBlockState(pos));
 	}
 
 	private void cancelMining(ServerLevel level) {
@@ -716,6 +753,28 @@ public final class SmartBrain {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, -1);
 			this.miningPos = null;
 		}
+		this.restoreHand();
+	}
+
+	/** Zombies and skeletons visibly switch to their pickaxe when the block needs it. */
+	private void takeOutPickaxeFor(BlockState state) {
+		if (this.pickaxe.isEmpty() || this.stashedHand != null) {
+			return;
+		}
+		if (BlockWork.tool(this.mob, state) != this.pickaxe) {
+			return;
+		}
+		this.stashedHand = this.mob.getMainHandItem().copy();
+		this.mob.setItemSlot(EquipmentSlot.MAINHAND, this.pickaxe);
+	}
+
+	/** Puts the pickaxe away and gives the mob back its usual item. */
+	public void restoreHand() {
+		if (this.stashedHand == null) {
+			return;
+		}
+		this.mob.setItemSlot(EquipmentSlot.MAINHAND, this.stashedHand);
+		this.stashedHand = null;
 	}
 
 	private void tickMining(ServerLevel level) {
@@ -744,9 +803,12 @@ public final class SmartBrain {
 			}
 			BlockPos broken = this.miningPos;
 			this.miningPos = null;
+			this.restoreHand();
 			if (state.is(BlockTags.LOGS)) {
+				this.logsChopped++;
+				this.woodLog = state.getBlock();
 				// Keep chopping the rest of the tree.
-				BlockPos nextLog = BlockWork.findNearestAt(level, broken, 2, (p, st) -> st.is(BlockTags.LOGS) && BlockWork.canMine(this.mob, level, p, st));
+				BlockPos nextLog = BlockWork.findNearestAt(level, broken, 2, (p, st) -> st.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, st) && BlockWork.canMine(this.mob, level, p, st));
 				if (nextLog != null) {
 					this.setDigTarget(nextLog, false);
 				}
@@ -767,13 +829,9 @@ public final class SmartBrain {
 		if (!current.canBeReplaced() || !level.isUnobstructed(state, pos, CollisionContext.empty())) {
 			return false;
 		}
-		if (useStock) {
-			if (this.blocks <= 0) {
-				return false;
-			}
-			this.blocks--;
-		}
+		// Mobs never run out of building blocks; the stock only decides how many they drop.
 		level.setBlock(pos, Block.updateFromNeighbourShapes(state, level, pos), Block.UPDATE_ALL);
+		MobBuilt.mark(level, pos);
 		level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
 		if (state.getBlock() instanceof AbstractFurnaceBlock) {
 			Furnaces.load(level, pos, this.mob.getRandom());
@@ -813,7 +871,7 @@ public final class SmartBrain {
 		}
 
 		if (this.craftingTicks == 0) {
-			this.craftStation = BlockWork.findNearest(level, this.mob.blockPosition(), 5, s -> s.is(Blocks.CRAFTING_TABLE));
+			this.craftStation = BlockWork.findNearest(level, this.mob.blockPosition(), 10, s -> s.is(Blocks.CRAFTING_TABLE));
 			if (this.craftStation == null && griefing) {
 				this.craftStation = this.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
 			}
@@ -876,8 +934,8 @@ public final class SmartBrain {
 			return;
 		}
 		BlockPos here = this.mob.blockPosition();
-		boolean hasTable = BlockWork.findNearest(level, here, 6, s -> s.is(Blocks.CRAFTING_TABLE)) != null;
-		boolean hasFurnace = BlockWork.findNearest(level, here, 6, s -> s.getBlock() instanceof AbstractFurnaceBlock) != null;
+		boolean hasTable = BlockWork.findNearest(level, here, 10, s -> s.is(Blocks.CRAFTING_TABLE)) != null;
+		boolean hasFurnace = BlockWork.findNearest(level, here, 10, s -> s.getBlock() instanceof AbstractFurnaceBlock) != null;
 		if (!hasTable) {
 			this.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
 		} else if (!hasFurnace && r.nextBoolean()) {
@@ -955,9 +1013,13 @@ public final class SmartBrain {
 				this.outpostCooldown = 2400 + this.mob.getRandom().nextInt(2400);
 				return true;
 			}
-			this.houseBuilt = true;
 			if (this.castleBuilder) {
+				this.houseBuilt = true;
 				this.castleCenter = this.houseCenter;
+			} else if (this.isPassive()) {
+				this.houseCooldown = 2400 + this.mob.getRandom().nextInt(2400);
+			} else {
+				this.houseBuilt = true;
 			}
 		}
 		return true;
@@ -978,96 +1040,53 @@ public final class SmartBrain {
 			this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			return true;
 		}
+		if (state.getBlock() instanceof DoorBlock || state.getBlock() instanceof AbstractBedBlock) {
+			return this.placeTwoPart(level, pos, state);
+		}
 		if (pos.getY() < this.houseCenter.getY() && !current.canBeReplaced()) {
-			if (!BlockWork.isBuildingMaterial(current) || current.hasBlockEntity() || current.is(state.getBlock())) {
+			if (!BlockWork.isNatural(level, pos, current) || current.hasBlockEntity() || current.is(state.getBlock())) {
 				return false;
 			}
 			level.setBlock(pos, state, Block.UPDATE_ALL);
+			MobBuilt.mark(level, pos);
 			level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
 			this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			return true;
 		}
 		boolean placed = this.place(level, pos, state, false);
-		if (placed && this.buildingOutpost && state.is(Blocks.CHEST)) {
+		if (placed && this.buildingOutpost && (state.is(Blocks.CHEST) || state.is(Blocks.BARREL))) {
 			Furnaces.fillSupplyChest(level, pos, this.mob.getRandom());
 		}
 		return placed;
 	}
 
+	/** Doors (lower + upper half) and beds (foot + head) need both blocks placed together. */
+	private boolean placeTwoPart(ServerLevel level, BlockPos pos, BlockState state) {
+		BlockPos other;
+		BlockState otherState;
+		if (state.getBlock() instanceof DoorBlock) {
+			other = pos.above();
+			otherState = state.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER);
+		} else {
+			other = pos.relative(state.getValue(HorizontalDirectionalBlock.FACING));
+			otherState = state.setValue(AbstractBedBlock.PART, BedPart.HEAD);
+		}
+		if (!level.getBlockState(pos).canBeReplaced() || !level.getBlockState(other).canBeReplaced()
+			|| !level.isUnobstructed(state, pos, CollisionContext.empty()) || !level.isUnobstructed(otherState, other, CollisionContext.empty())) {
+			return false;
+		}
+		int flags = Block.UPDATE_ALL | Block.UPDATE_KNOWN_SHAPE;
+		level.setBlock(pos, state, flags);
+		level.setBlock(other, otherState, flags);
+		MobBuilt.mark(level, pos);
+		MobBuilt.mark(level, other);
+		level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
+		this.mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+		return true;
+	}
+
 	private void planHouse(ServerLevel level) {
-		BlockPos center = this.mob.blockPosition();
-		RandomSource r = this.mob.getRandom();
-		int half = 2 + r.nextInt(3);
-		int wallHeight = 3 + r.nextInt(2);
-		int obstacles = 0;
-		for (int x = -half; x <= half; x++) {
-			for (int z = -half; z <= half; z++) {
-				if (!BlockWork.isFloor(level, center.offset(x, -1, z))) {
-					obstacles++;
-				}
-				for (int y = 0; y <= wallHeight; y++) {
-					if (!level.getBlockState(center.offset(x, y, z)).canBeReplaced()) {
-						obstacles++;
-					}
-				}
-			}
-		}
-		if (obstacles > half * 2) {
-			return;
-		}
-
-		// One material per house.
-		Block[] walls = {Blocks.OAK_PLANKS, Blocks.SPRUCE_PLANKS, Blocks.BIRCH_PLANKS, Blocks.COBBLESTONE, Blocks.STONE_BRICKS, Blocks.MUD_BRICKS};
-		this.houseWall = walls[r.nextInt(walls.length)];
-		Block roof = r.nextBoolean() ? this.houseWall : Blocks.SPRUCE_PLANKS;
-		Direction doorSide = Direction.Plane.HORIZONTAL.getRandomDirection(r);
-		List<BlockPos> plan = new ArrayList<>();
-		List<BlockState> states = new ArrayList<>();
-		// Floor, replacing the ground inside the walls.
-		for (int x = -half + 1; x < half; x++) {
-			for (int z = -half + 1; z < half; z++) {
-				plan.add(center.offset(x, -1, z));
-				states.add(Blocks.OAK_PLANKS.defaultBlockState());
-			}
-		}
-		for (int y = 0; y < wallHeight; y++) {
-			for (int x = -half; x <= half; x++) {
-				for (int z = -half; z <= half; z++) {
-					boolean edge = Math.abs(x) == half || Math.abs(z) == half;
-					if (!edge) {
-						continue;
-					}
-					boolean door = y <= 1 && x == doorSide.getStepX() * half && z == doorSide.getStepZ() * half;
-					if (door) {
-						continue;
-					}
-					boolean corner = Math.abs(x) == half && Math.abs(z) == half;
-					plan.add(center.offset(x, y, z));
-					states.add(corner ? Blocks.OAK_LOG.defaultBlockState() : this.makeshiftState(r));
-				}
-			}
-		}
-		for (int x = -half; x <= half; x++) {
-			for (int z = -half; z <= half; z++) {
-				plan.add(center.offset(x, wallHeight, z));
-				states.add(roof.defaultBlockState());
-			}
-		}
-		Direction back = doorSide.getOpposite();
-		Direction side = doorSide.getClockWise();
-		int in = half - 1;
-		plan.add(center.relative(back, in).relative(side, in));
-		states.add(Blocks.CRAFTING_TABLE.defaultBlockState());
-		if (r.nextBoolean()) {
-			plan.add(center.relative(back, in).relative(side.getOpposite(), in));
-			states.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, doorSide));
-		}
-
-		this.housePlan = plan;
-		this.houseStates = states;
-		this.houseIndex = 0;
-		this.houseCenter = center;
-		this.buildInterval = 5;
+		Houses.plan(this, level, Houses.random(this.mob.getRandom()));
 	}
 
 	private BlockState makeshiftState(RandomSource r) {
@@ -1111,7 +1130,10 @@ public final class SmartBrain {
 		if (this.oreCooldown == 0) {
 			this.oreCooldown = 100 + r.nextInt(150);
 			if (r.nextFloat() < 0.85F) {
-				BlockPos ore = BlockWork.findNearestAt(level, here, 10, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
+				BlockPos ore = BlockWork.findNearestAt(level, here, 12, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
+				if (ore == null) {
+					ore = BlockWork.findNearestAt(level, here, 8, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
+				}
 				if (ore != null) {
 					this.setDigTarget(ore, true);
 					return true;
@@ -1121,14 +1143,14 @@ public final class SmartBrain {
 		boolean passive = this.isPassive();
 		if (this.gatherCooldown == 0 && this.blocks < (passive ? 112 : 64)) {
 			this.gatherCooldown = passive ? 80 + r.nextInt(160) : 200 + r.nextInt(300);
-			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
+			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
 			if (log == null && passive) {
 				// Passive mobs quarry stone into cobblestone.
-				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> (st.is(BlockTags.BASE_STONE_OVERWORLD) || st.is(Blocks.COBBLESTONE))
+				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> st.is(BlockTags.BASE_STONE_OVERWORLD) && BlockWork.isNatural(level, p, st)
 					&& BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, st));
 			}
 			BlockPos pick = log != null ? log : BlockWork.findNearestAt(level, here, 3,
-				(p, s) -> BlockWork.isBuildingMaterial(s) && BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, s));
+				(p, s) -> BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, s));
 			if (pick != null) {
 				this.setDigTarget(pick, false);
 				return true;

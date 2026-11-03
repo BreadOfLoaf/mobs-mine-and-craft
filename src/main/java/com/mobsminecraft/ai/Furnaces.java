@@ -73,7 +73,7 @@ final class Furnaces {
 			}
 			RandomSource r = mob.getRandom();
 			brain.cookCooldown = 1200 + r.nextInt(1800);
-			BlockPos furnace = BlockWork.findNearest(level, mob.blockPosition(), 6, s -> s.getBlock() instanceof AbstractFurnaceBlock);
+			BlockPos furnace = BlockWork.findNearest(level, mob.blockPosition(), 12, s -> s.getBlock() instanceof AbstractFurnaceBlock);
 			if (furnace == null) {
 				furnace = brain.placeAdjacent(level, Blocks.FURNACE.defaultBlockState()
 					.setValue(AbstractFurnaceBlock.FACING, mob.getDirection().getOpposite()));

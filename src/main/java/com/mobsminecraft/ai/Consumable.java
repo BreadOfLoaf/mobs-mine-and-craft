@@ -181,10 +181,8 @@ public enum Consumable {
 			int cooldown = use(brain, c, level, mob, target, griefing);
 			if (cooldown > 0) {
 				brain.consumableCooldown = cooldown + r.nextInt(15);
+				// Consumables never run out; what a mob drops on death is decided separately.
 				mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
-				if (--c.uses <= 0) {
-					brain.carried.remove(c);
-				}
 				return;
 			}
 		}

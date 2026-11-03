@@ -37,7 +37,15 @@ public class MobsMineAndCraft implements ModInitializer {
 			}
 		});
 
-		// Mobs drop everything they carry. An enchanted skeleton bow always drops, sometimes at half durability.
+		// A mob that dies with its pickaxe out gets its usual item back first, so normal drops still happen.
+		ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) -> {
+			if (entity instanceof SmartMobHolder holder) {
+				holder.mmc$getBrain().restoreHand();
+			}
+			return true;
+		});
+
+		// Mobs drop what they carry. An enchanted skeleton bow always drops, sometimes at half durability.
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
 			if (!(entity instanceof SmartMobHolder holder) || !(entity.level() instanceof ServerLevel level)) {
 				return;
