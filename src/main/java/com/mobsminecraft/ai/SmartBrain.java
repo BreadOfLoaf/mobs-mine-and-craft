@@ -337,6 +337,14 @@ public final class SmartBrain {
 	int flankSlot = Integer.MIN_VALUE;
 	Vec3 flankBase;
 	int sidestepTicks;
+	// Teamwork (see Squad).
+	Squad squad;
+	Squad.Role squadRole;
+	int squadSlot;
+	double squadAngle;
+	/** True while the squad is moving this mob into position (it holds off attacking until then). */
+	boolean squadHold;
+	int squadCoverCooldown;
 	// Under fire (see UnderFire): who's shooting, until when we remember it, where we're hiding.
 	net.minecraft.world.entity.player.Player fireFrom;
 	int underFireUntil;
@@ -572,6 +580,9 @@ public final class SmartBrain {
 		if (target == this.provokedBy && this.mob.tickCount < this.provokedUntil) {
 			return false;
 		}
+		if (this.squadHold && this.squad != null && target == this.squad.target) {
+			return true; // getting into position with the squad first
+		}
 		if (p.peaceful() || p == Personality.ENGINEER || p == Personality.GRIEFER) {
 			return true;
 		}
@@ -624,6 +635,7 @@ public final class SmartBrain {
 	/** What the mob is busy with right now, in a word (for playtest reports). */
 	public String activity() {
 		if (this.eating()) return "eating";
+		if (this.squadHold && this.squad != null) return "squad_" + this.squad.phase.name().toLowerCase();
 		if (this.prospectPhase != Prospecting.NONE || this.prospectLeader != null) return "prospecting";
 		if (this.stashPos != null) return "stashing";
 		if (this.miningPos != null) return "mining";
@@ -809,6 +821,14 @@ public final class SmartBrain {
 		}
 		if (UnderFire.tick(this, level, target)) {
 			return;
+		}
+		if (Squad.tick(this, level)) {
+			return;
+		}
+		if (this.squad != null && this.squad.phase == Squad.Phase.ATTACK && this.mob.getTarget() == null && !this.refusesTarget(this.squad.target)
+			&& (this.squadRole == Squad.Role.FRONT || this.squadRole == Squad.Role.FLANK || this.squadRole == Squad.Role.RANGED || this.squadRole == Squad.Role.BOMBER)) {
+			this.mob.setTarget(this.squad.target);
+			target = this.squad.target;
 		}
 		if (this.sidestepTicks > 0 && target != null) {
 			this.sidestepTicks--;
@@ -1075,6 +1095,7 @@ public final class SmartBrain {
 
 	private void tickCooldowns() {
 		if (this.consumableCooldown > 0) this.consumableCooldown--;
+		if (this.squadCoverCooldown > 0) this.squadCoverCooldown--;
 		if (this.escapeCooldown > 0) this.escapeCooldown--;
 		if (this.decorCooldown > 0) this.decorCooldown--;
 		if (this.oreCooldown > 0) this.oreCooldown--;

@@ -222,6 +222,10 @@ public class Playtest implements ModInitializer {
 					run.cmd("fill %d 121 %d %d 123 %d minecraft:cobblestone hollow", o.getX() - 11, o.getZ() + 8, o.getX() - 8, o.getZ() + 11);
 				}, mobs("zombie", 4, "skeleton", 2), 14, Behaviour.FIGHT));
 		}
+		for (String mode : new String[] {"on", "off"}) {
+			add(new Scenario("squad_" + mode, 2400, "A mixed band (tacticians, fighters, a hero, a crafter, a builder, an engineer, skeletons, a creeper) vs the player bot; teamwork "
+				+ mode + ".", (run, o) -> {}, mobs("zombie", 8, "skeleton", 3, "creeper", 1), 24, Behaviour.FIGHT));
+		}
 		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
 			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
@@ -478,6 +482,7 @@ public class Playtest implements ModInitializer {
 
 			AiStats.reset();
 			com.mobsminecraft.ai.Flank.flanking = !this.scenario.name().equals("wave_classic");
+			com.mobsminecraft.ai.Squad.enabled = !this.scenario.name().equals("squad_off");
 			AiStats.aiEnabled = !this.scenario.name().equals("crowd_vanilla");
 			AiStats.timing = this.scenario.name().startsWith("crowd") || this.scenario.bot() == Behaviour.PLAYER;
 			this.tickNanos = 0;
@@ -565,8 +570,14 @@ public class Playtest implements ModInitializer {
 					double angle = this.scenario.bot() == Behaviour.KITE
 						? Math.PI + (n - total / 2.0) * 0.15
 						: n * (Math.PI * 2 / total);
-					double mx = x + 0.5 + Math.cos(angle) * this.scenario.ring();
-					double mz = z + 0.5 + Math.sin(angle) * this.scenario.ring();
+					double ring = this.scenario.ring();
+					if (this.scenario.name().startsWith("squad_")) {
+						// Scattered, like mobs in the world: some close, some further off, so they'd arrive one by one.
+						angle = n * 2.39996;
+						ring = 10 + (n % 3) * 12;
+					}
+					double mx = x + 0.5 + Math.cos(angle) * ring;
+					double mz = z + 0.5 + Math.sin(angle) * ring;
 					if (this.scenario.ring() < 0) {
 						double spacing = -this.scenario.ring();
 						mx = x + 0.5 + (n % 4 - 1.5) * spacing;
@@ -713,6 +724,8 @@ public class Playtest implements ModInitializer {
 						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
 						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
 						case String n when n.startsWith("vs_") -> brain.debugPersonality(n.substring(3));
+						case "squad_on", "squad_off" -> brain.debugPersonality(t.type.equals("zombie")
+							? new String[] {"tactician", "tactician", "fighter", "fighter", "hero", "crafter", "builder", "engineer"}[pi++ % 8] : "tactician");
 						case "roles_near" -> brain.debugPersonality(t.type.equals("skeleton") ? "tactician"
 							: new String[] {"engineer", "engineer", "mineman", "mineman", "builder", "builder", "crafter", "crafter", "griefer", "griefer", "tactician", "tactician"}[pi++]);
 						case "anvil_warn" -> { brain.debugPersonality("tactician"); brain.debugForce("anvils"); }
