@@ -194,16 +194,15 @@ public enum Personality {
 			case IMPOSTER -> {
 				AttributeInstance health = mob.getAttribute(Attributes.MAX_HEALTH);
 				if (health != null && !health.hasModifier(IMPOSTER_HEALTH)) {
-					health.addPermanentModifier(new AttributeModifier(IMPOSTER_HEALTH, 1.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+					health.addPermanentModifier(new AttributeModifier(IMPOSTER_HEALTH, 1.5, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
 					mob.setHealth(mob.getMaxHealth());
 				}
 				Consumable.addCarried(b, Consumable.GOLDEN_APPLE, 3 + r.nextInt(3), null);
-				// Starts in iron and upgrades it with every "ally" it slays.
-				if (Juggernaut.canWearArmor(mob) && !Juggernaut.isJuggernaut(mob)) {
-					mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
-					mob.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.IRON_CHESTPLATE));
-					mob.setItemSlot(EquipmentSlot.LEGS, new ItemStack(Items.IRON_LEGGINGS));
-					mob.setItemSlot(EquipmentSlot.FEET, new ItemStack(Items.IRON_BOOTS));
+				// Starts with no armour but 2.5x health, and grinds its way up to better gear with every "ally" it slays.
+				if (!Juggernaut.isJuggernaut(mob)) {
+					for (EquipmentSlot slot : new EquipmentSlot[] {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+						mob.setItemSlot(slot, ItemStack.EMPTY);
+					}
 				}
 				b.houseBuilder = BlockWork.canBuild(mob) && r.nextFloat() < 0.3F;
 				b.greedy = true;

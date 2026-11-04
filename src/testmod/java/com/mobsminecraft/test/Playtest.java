@@ -82,7 +82,7 @@ public class Playtest implements ModInitializer {
 			run.cmd("fill %d 121 %d %d 121 %d minecraft:coal_ore", x - 9, z - 10, x - 7, z - 10);
 			run.cmd("fill %d 121 %d %d 121 %d minecraft:iron_ore", x + 7, z + 10, x + 9, z + 10);
 		}, mobs("zombie", 5, "skeleton", 3, "spider", 2, "creeper", 1), 8, Behaviour.STAND));
-		add(new Scenario("house_build", 3600, "12 builders each start a house in four biome strips (savanna, snowy taiga, desert, jungle).", (run, o) -> {
+		add(new Scenario("house_build", 4800, "12 builders each start a house in four biome strips (savanna, snowy taiga, desert, jungle).", (run, o) -> {
 			String[] biomes = {"savanna", "snowy_taiga", "desert", "jungle"};
 			for (int i = 0; i < 4; i++) {
 				int x0 = o.getX() - 36 + i * 18;
@@ -90,9 +90,9 @@ public class Playtest implements ModInitializer {
 			}
 		},
 			mobs("zombie", 4, "skeleton", 2, "villager", 4, "cow", 2), -18, Behaviour.SPECTATE));
-		add(new Scenario("house_build_hostile", 3600, "8 zombie and skeleton builders each start a house (no villagers to fight).", (run, o) -> {},
+		add(new Scenario("house_build_hostile", 4800, "8 zombie and skeleton builders each start a house (no villagers to fight).", (run, o) -> {},
 			mobs("zombie", 5, "skeleton", 3), -18, Behaviour.SPECTATE));
-		add(new Scenario("house_build_villagers", 3600, "8 villagers and cows each start a house (no monsters around).", (run, o) -> {},
+		add(new Scenario("house_build_villagers", 4800, "8 villagers and cows each start a house (no monsters around).", (run, o) -> {},
 			mobs("villager", 6, "cow", 2), -18, Behaviour.SPECTATE));
 		add(new Scenario("passive_life", 3600, "Cows, sheep and villagers in a field with trees; spectator bot. What do they do?", (run, o) -> {
 			for (int i = 0; i < 10; i++) {
@@ -676,6 +676,7 @@ public class Playtest implements ModInitializer {
 						case "loot" -> { brain.debugPersonality("fighter"); if (pi++ % 2 == 0) brain.debugForce("greedy"); }
 						case "cleanup" -> { brain.debugPersonality("builder"); if (pi++ == 0) brain.debugForce("mess"); }
 						case "hero" -> brain.debugPersonality("hero");
+						case "house_build", "house_build_hostile", "house_build_villagers" -> brain.debugPersonality("builder");
 						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
 						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
 						case "roles_near" -> brain.debugPersonality(t.type.equals("skeleton") ? "tactician"
@@ -711,8 +712,12 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			if (this.ticks == 30 && this.scenario.name().startsWith("house_build")) {
+				// Half of them start a build; the other half are free to be their partners.
+				int n = 0;
 				for (Tracked t : this.tracked) {
-					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);
+					if (n++ % 2 == 0) {
+						((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);
+					}
 				}
 			}
 			if (this.scenario.name().equals("juggernaut") && this.ticks == this.scenario.ticks() - 30) {

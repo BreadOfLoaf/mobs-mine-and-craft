@@ -314,6 +314,7 @@ public final class SmartBrain {
 	int griefTntCooldown;
 	Vec3 griefFleeFrom;
 	int griefFireCooldown;
+	int panicTicks;
 	int griefFleeTicks;
 	int cleanupCooldown;
 	BlockPos cleanupTarget;
@@ -380,6 +381,14 @@ public final class SmartBrain {
 	List<BlockPos> bunker;
 	int wallInterval = 4;
 
+	// Building in pairs: the lead builder's partner, and who a helper is helping (see tickBlueprint)
+	SmartBrain partner;
+	SmartBrain helpingWith;
+	int helperIndex = -1;
+	int workingIndex = -1;
+	int partnerWaitTicks;
+	boolean soloBuild;
+
 	// Blueprint blocks that were blocked (by a mob standing there) get retried at the end
 	private final java.util.Map<BlockPos, Integer> blueprintRetries = new java.util.HashMap<>();
 
@@ -430,7 +439,7 @@ public final class SmartBrain {
 	}
 
 	public boolean isBuilding() {
-		return this.housePlan != null || this.rsPlan != null || this.trapPlan != null || this.prospectPhase != Prospecting.NONE || this.farmPlan != null;
+		return this.housePlan != null || this.helpingWith != null || this.rsPlan != null || this.trapPlan != null || this.prospectPhase != Prospecting.NONE || this.farmPlan != null;
 	}
 
 	/** Test hook: switch on one behaviour right away. */
@@ -946,11 +955,24 @@ public final class SmartBrain {
 		if (this.housePlan != null && this.tickBlueprint(level)) {
 			return;
 		}
+		if (this.tickHelping(level)) {
+			return;
+		}
 		if (this.investigate(level)) {
 			return;
 		}
 		if (Wolves.isWildWolf(this) && Wolves.heal(this, level)) {
 			return;
+		}
+		// Monsters take a dislike to any griefer wrecking things near them.
+		if (this.mob instanceof Enemy && !Griefer.grieves(this) && this.mob.tickCount % 40 == 0 && this.mob.getTarget() == null && this.personality != Personality.GIFTER) {
+			for (Mob m : level.getEntitiesOfClass(Mob.class, this.mob.getBoundingBox().inflate(12.0), m -> m != this.mob && m.isAlive() && Griefer.grieves(brainOf(m)))) {
+				if (this.mob.hasLineOfSight(m) && this.mob.getRandom().nextFloat() < 0.5F) {
+					this.mob.setTarget(m);
+					com.mobsminecraft.debug.AiStats.add("mob_hunts_griefer");
+					break;
+				}
+			}
 		}
 		// Each personality's own work when there's no fight on.
 		if (canBuild && Roles.idle(this, level)) {
@@ -1737,6 +1759,7 @@ public final class SmartBrain {
 				return this.castleTries < 10;
 			}
 			Castle.plan(this, level);
+			this.soloBuild = true;
 			if (this.housePlan == null) {
 				if (++this.castleTries >= 10) {
 					com.mobsminecraft.debug.AiStats.add("fort_no_room");
@@ -1788,8 +1811,10 @@ public final class SmartBrain {
 			}
 			if (this.castleBuilder) {
 				Castle.plan(this, level);
+				this.soloBuild = true;
 			} else {
 				this.planHouse(level);
+				this.soloBuild = false;
 			}
 			if (this.housePlan == null) {
 				return false;
@@ -1799,52 +1824,47 @@ public final class SmartBrain {
 		double distSq = this.mob.distanceToSqr(c);
 		if (distSq > 1024.0) {
 			com.mobsminecraft.debug.AiStats.add("build_abandoned:too_far");
-			this.housePlan = null;
-			this.buildingOutpost = false;
+			this.endBuild();
 			return false;
 		}
-		// Build from where it stands; only walk when the next block is out of reach (long builds like mineshafts).
-		// Measured horizontally: roofs are high up but still within reach of a builder standing inside.
-		BlockPos nextPos = this.housePlan.get(Math.min(this.houseIndex, this.housePlan.size() - 1));
-		double hx = nextPos.getX() + 0.5 - this.mob.getX();
-		double hz = nextPos.getZ() + 0.5 - this.mob.getZ();
-		boolean outOfReach = hx * hx + hz * hz > 81.0;
-		if (outOfReach && this.buildWalkTicks < 100) {
-			this.buildWalkTicks++;
-			if (this.mob.tickCount % 10 == 0) {
-				this.mob.getNavigation().moveTo(nextPos.getX() + 0.5, nextPos.getY(), nextPos.getZ() + 0.5, this.walkSpeed());
+		// Houses, outposts and mineshafts take two builders working together; a Juggernaut builds its fort alone.
+		boolean duo = !this.soloBuild;
+		if (duo && !this.hasPartner()) {
+			if (this.mob.tickCount % 40 == 0) {
+				this.findPartner(level);
 			}
-			return true;
-		}
-		if (!outOfReach) {
-			this.buildWalkTicks = 0;
-		}
-		this.holdStill();
-		if (++this.buildTick % this.buildInterval != 0) {
-			return true;
-		}
-		while (this.houseIndex < this.housePlan.size()) {
-			BlockPos p = this.housePlan.get(this.houseIndex);
-			BlockState s = this.houseStates.get(this.houseIndex);
-			this.houseIndex++;
-			this.mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
-			if (this.placeBlueprintBlock(level, p, s)) {
-				break;
-			}
-			// Blocked by a mob (or the player) standing there: try it again at the end, so walls get no holes.
-			BlockState now = level.getBlockState(p);
-			if (s != Outpost.DIG && now.canBeReplaced() && !now.is(s.getBlock()) && !level.isUnobstructed(s, p, net.minecraft.world.phys.shapes.CollisionContext.empty())) {
-				int tries = this.blueprintRetries.merge(p, 1, Integer::sum);
-				if (tries <= 6) {
-					this.housePlan.add(p);
-					this.houseStates.add(s);
+			if (!this.hasPartner()) {
+				if (++this.partnerWaitTicks > 2400) {
+					com.mobsminecraft.debug.AiStats.add("build_abandoned:no_partner");
+					this.endBuild();
+					this.houseCooldown = 1200 + this.mob.getRandom().nextInt(1200);
+					return false;
 				}
+				// Waits at the site for help.
+				if (distSq > 16.0) {
+					this.walkTo(c, this.walkSpeed());
+				} else {
+					this.holdStill();
+				}
+				if (this.partnerWaitTicks == 1) {
+					com.mobsminecraft.debug.AiStats.add("build_waiting_for_partner");
+				}
+				return true;
 			}
 		}
-		if (this.houseIndex >= this.housePlan.size()) {
+		this.partnerWaitTicks = 0;
+		int next = this.nextBlueprintIndex(level);
+		if (next < 0) {
+			// Everything's handed out; the partner may still be placing its last block.
+			this.holdStill();
+		} else if (this.workBlueprint(level, this, next, duo)) {
+			return true;
+		}
+		if (this.houseIndex >= this.housePlan.size() && this.workingIndex < 0 && (this.partner == null || this.partner.helperIndex < 0)) {
 			com.mobsminecraft.debug.AiStats.add("build_finished");
 			this.housePlan = null;
 			this.blueprintRetries.clear();
+			this.releasePartner();
 			if (this.buildingOutpost) {
 				this.buildingOutpost = false;
 				this.outpostCooldown = 4800 + this.mob.getRandom().nextInt(4800);
@@ -1861,6 +1881,138 @@ public final class SmartBrain {
 			}
 		}
 		return true;
+	}
+
+	// ------------------------------------------------------------------ building in pairs
+
+	private boolean hasPartner() {
+		return this.partner != null && this.partner.mob.isAlive() && this.partner.helpingWith == this && this.partner.mob.distanceTo(this.mob) < 32.0F;
+	}
+
+	/** Recruits a nearby mob of the same side that isn't busy to help build. */
+	private void findPartner(ServerLevel level) {
+		this.releasePartner();
+		boolean hostile = this.mob instanceof Enemy;
+		Mob best = null;
+		for (Mob m : level.getEntitiesOfClass(Mob.class, this.mob.getBoundingBox().inflate(20.0), m -> m != this.mob && m.isAlive()
+			&& (m instanceof Enemy) == hostile && BlockWork.canBuild(m) && m.getTarget() == null)) {
+			SmartBrain o = brainOf(m);
+			boolean willing = hostile
+				? o.personality == Personality.BUILDER || o.personality == Personality.TACTICIAN || o.personality == Personality.HERO
+				: !o.personality.peaceful() && o.personality != Personality.GRIEFER;
+			if (!willing || o.housePlan != null || o.helpingWith != null || o.prospectPhase != Prospecting.NONE || o.prospectLeader != null) continue;
+			if (best == null || m.distanceToSqr(this.mob) < best.distanceToSqr(this.mob)) best = m;
+		}
+		if (best != null) {
+			SmartBrain o = brainOf(best);
+			o.helpingWith = this;
+			o.helperIndex = -1;
+			this.partner = o;
+			com.mobsminecraft.debug.AiStats.add("build_partner_found");
+		}
+	}
+
+	private void releasePartner() {
+		if (this.partner != null && this.partner.helpingWith == this) {
+			this.partner.helpingWith = null;
+			this.partner.helperIndex = -1;
+		}
+		this.partner = null;
+	}
+
+	private void endBuild() {
+		this.housePlan = null;
+		this.workingIndex = -1;
+		this.buildingOutpost = false;
+		this.soloBuild = false;
+		this.partnerWaitTicks = 0;
+		this.releasePartner();
+	}
+
+	/** Hands out the next blueprint index still to be placed (shared between the two builders), or -1. */
+	private int nextBlueprintIndex(ServerLevel level) {
+		if (this.workingIndex >= 0) {
+			return this.workingIndex;
+		}
+		if (this.houseIndex < this.housePlan.size()) {
+			this.workingIndex = this.houseIndex++;
+			return this.workingIndex;
+		}
+		return -1;
+	}
+
+	/**
+	 * One builder's turn at a blueprint block: walk within reach of it, then place it after a short pause, like a
+	 * player would. Returns true while busy (walking or working). {@code owner} is the brain holding the blueprint.
+	 */
+	private boolean workBlueprint(ServerLevel level, SmartBrain owner, int index, boolean duo) {
+		BlockPos p = owner.housePlan.get(index);
+		BlockState s = owner.houseStates.get(index);
+		double hx = p.getX() + 0.5 - this.mob.getX();
+		double hz = p.getZ() + 0.5 - this.mob.getZ();
+		double reach = duo ? 4.5 : 9.0;
+		boolean outOfReach = hx * hx + hz * hz > reach * reach;
+		if (outOfReach && this.buildWalkTicks < 100) {
+			this.buildWalkTicks++;
+			if (this.mob.tickCount % 10 == 0) {
+				this.mob.getNavigation().moveTo(p.getX() + 0.5, p.getY(), p.getZ() + 0.5, this.walkSpeed());
+			}
+			return true;
+		}
+		this.holdStill();
+		this.mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
+		int interval = duo ? 10 : owner.buildInterval;
+		if (++this.buildTick % interval != 0) {
+			return true;
+		}
+		this.buildWalkTicks = 0;
+		// Place it (blocks already there, or ground that doesn't need replacing, are just skipped).
+		this.houseCenter = owner.houseCenter;
+		this.buildingOutpost = owner.buildingOutpost;
+		boolean placed = this.placeBlueprintBlock(level, p, s);
+		if (owner == this) {
+			this.workingIndex = -1;
+		} else {
+			this.helperIndex = -1;
+		}
+		if (!placed) {
+			// Blocked by a mob (or the player) standing there: try it again at the end, so walls get no holes.
+			BlockState now = level.getBlockState(p);
+			if (s != Outpost.DIG && now.canBeReplaced() && !now.is(s.getBlock()) && !level.isUnobstructed(s, p, net.minecraft.world.phys.shapes.CollisionContext.empty())) {
+				int tries = owner.blueprintRetries.merge(p, 1, Integer::sum);
+				if (tries <= 6) {
+					owner.housePlan.add(p);
+					owner.houseStates.add(s);
+				}
+			}
+			// Nothing to do there: no pause before the next one.
+			this.buildTick = interval - 1;
+		}
+		return true;
+	}
+
+	/** A helper's turn: take a block from the lead builder's blueprint and place it. Returns true while helping. */
+	private boolean tickHelping(ServerLevel level) {
+		SmartBrain lead = this.helpingWith;
+		if (lead == null) {
+			return false;
+		}
+		if (!lead.mob.isAlive() || lead.housePlan == null || lead.partner != this || lead.mob.distanceTo(this.mob) > 32.0F) {
+			this.helpingWith = null;
+			this.helperIndex = -1;
+			return false;
+		}
+		if (this.helperIndex < 0) {
+			if (lead.houseIndex >= lead.housePlan.size()) {
+				this.holdStill();
+				return true;
+			}
+			this.helperIndex = lead.houseIndex++;
+		}
+		if (this.mob.tickCount % 200 == 0) {
+			com.mobsminecraft.debug.AiStats.add("build_helping");
+		}
+		return this.workBlueprint(level, lead, this.helperIndex, true);
 	}
 
 	/**

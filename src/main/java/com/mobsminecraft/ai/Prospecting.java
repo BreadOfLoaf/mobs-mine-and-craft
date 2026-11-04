@@ -59,24 +59,27 @@ final class Prospecting {
 
 	private static boolean tryStart(SmartBrain brain, ServerLevel level, boolean griefing) {
 		Mob mob = brain.mob;
-		if (brain.prospectCooldown > 0 || !griefing || !mob.onGround() || !BlockWork.canBuild(mob) || Outpost.isUnderground(level, mob)) {
+		boolean underground = Outpost.isUnderground(level, mob);
+		// Minemen already underground run a branch mine from where they are; everyone else starts from the surface.
+		if (brain.prospectCooldown > 0 || !griefing || !mob.onGround() || !BlockWork.canBuild(mob)
+			|| (underground && brain.personality != Personality.MINEMAN)) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
 		boolean mineman = brain.personality == Personality.MINEMAN;
-		brain.prospectCooldown = mineman ? 300 + r.nextInt(600) : 2400 + r.nextInt(3600);
+		brain.prospectCooldown = mineman ? 200 + r.nextInt(300) : 2400 + r.nextInt(3600);
 		if (!mineman && r.nextFloat() > 0.6F && !brain.forceProspect) {
 			return false;
 		}
 		BlockPos start = mob.blockPosition();
 		Direction first = Direction.Plane.HORIZONTAL.getRandomDirection(r);
-		int wantDepth = 6 + r.nextInt(5);
-		int length = 5 + r.nextInt(6);
+		int wantDepth = underground ? 1 + r.nextInt(2) : 6 + r.nextInt(5);
+		int length = underground ? 8 + r.nextInt(7) : 5 + r.nextInt(6);
 		List<Op> ops = null;
 		Direction dir = first;
 		// Any direction will do, and shallower if the ground is too thin (caves, water) for a deep one.
 		search:
-		for (int depth = wantDepth; depth >= 4; depth -= 2) {
+		for (int depth = wantDepth; depth >= (underground ? 1 : 4); depth -= underground ? 1 : 2) {
 			for (int k = 0; k < 4; k++) {
 				dir = Direction.from2DDataValue((first.get2DDataValue() + k) % 4);
 				List<Op> plan = planTrip(start, dir, depth, length);
@@ -181,7 +184,7 @@ final class Prospecting {
 				brain.prospectIndex++;
 				brain.prospectStuck = 0;
 				// In the tunnel: look around for ores the digging uncovered.
-				if (op.pos().getY() < brain.prospectStart.getY() - 3) {
+				if (op.pos().getY() < brain.prospectStart.getY() - 3 || brain.personality == Personality.MINEMAN) {
 					scanOres(brain, level, op.pos());
 				}
 				return true;
@@ -301,7 +304,7 @@ final class Prospecting {
 			// Minemen don't smelt: the ore goes in their chest (see Personalities.mineman).
 			brain.prospectCooldown = 0;
 			finish(brain, level);
-			brain.prospectCooldown = 300 + mob.getRandom().nextInt(600);
+			brain.prospectCooldown = 200 + mob.getRandom().nextInt(300);
 			return false;
 		}
 		if (brain.prospectFurnace == null) {

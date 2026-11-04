@@ -100,6 +100,29 @@ final class Griefer {
 	static boolean tick(SmartBrain b, ServerLevel level, LivingEntity target) {
 		Mob mob = b.mob;
 		RandomSource r = mob.getRandom();
+		// Hunted by the mobs it has been tormenting: scramble about in every direction.
+		LivingEntity hunter = null;
+		for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(10.0), m -> m != mob && m.isAlive() && m.getTarget() == mob)) {
+			hunter = m;
+			break;
+		}
+		if (hunter != null) {
+			if (b.panicTicks <= 0 || mob.getNavigation().isDone()) {
+				b.panicTicks = 12 + r.nextInt(16);
+				Vec3 away = mob.position().subtract(hunter.position()).multiply(1.0, 0.0, 1.0);
+				double base = away.lengthSqr() < 1.0E-4 ? r.nextDouble() * Math.PI * 2 : Math.atan2(away.z, away.x);
+				double a = base + (r.nextDouble() - 0.5) * Math.PI * 1.4;
+				double d = 4 + r.nextInt(6);
+				mob.getNavigation().moveTo(mob.getX() + Math.cos(a) * d, mob.getY(), mob.getZ() + Math.sin(a) * d, 1.35);
+				if (r.nextInt(3) == 0) {
+					mob.getJumpControl().jump();
+				}
+			}
+			b.panicTicks--;
+			if (mob.tickCount % 40 == 0) {
+				com.mobsminecraft.debug.AiStats.add("griefer_hunted");
+			}
+		}
 		// Fire doesn't bother a griefer.
 		if (mob.tickCount % 200 == 0) {
 			mob.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE, 260, 0, false, false));
@@ -107,7 +130,7 @@ final class Griefer {
 		// Lobs lit TNT every few seconds: at a crowd of mobs, at a player it knows about (over walls if need be),
 		// at somebody's build, or just somewhere nearby. It doesn't care who's standing there.
 		if (b.griefTntCooldown <= 0) {
-			b.griefTntCooldown = 40 + r.nextInt(40);
+			b.griefTntCooldown = 80 + r.nextInt(80);
 			Vec3 aim = null;
 			String why;
 			LivingEntity crowd = crowd(level, mob);

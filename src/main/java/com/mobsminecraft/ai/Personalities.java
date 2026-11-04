@@ -163,16 +163,7 @@ final class Personalities {
 		if (!griefing) {
 			return false;
 		}
-		// Torches in the dark (tunnels, caves, night).
-		if (b.torches > 0 && mob.tickCount % 40 == 0 && mob.onGround()
-			&& level.getBrightness(LightLayer.BLOCK, mob.blockPosition()) < 5 && level.getBlockState(mob.blockPosition()).isAir()
-			&& BlockWork.isFloor(level, mob.blockPosition().below())) {
-			BlockPos spot = BlockWork.findAdjacentSpot(level, mob);
-			if (spot != null && b.place(level, spot, Blocks.TORCH.defaultBlockState(), true)) {
-				b.torches--;
-				com.mobsminecraft.debug.AiStats.add("mineman_torch");
-			}
-		}
+		// (No torches: minemen work in the dark, which leaves plenty of room for monsters to spawn.)
 		// Enough ore: stash it in the nearest mob chest (or put one down).
 		int ore = 0;
 		for (ItemStack s : b.loot) {
