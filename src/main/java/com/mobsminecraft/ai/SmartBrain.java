@@ -277,6 +277,8 @@ public final class SmartBrain {
 	Mob crafterFor;
 	final java.util.Map<java.util.UUID, Integer> crafterGiven = new java.util.HashMap<>();
 	int crafterMade;
+	int craftDisengage;
+	int idleCraftCooldown;
 	ItemStack crafterItem;
 	BlockPos crafterTable;
 	int torches;
@@ -619,7 +621,8 @@ public final class SmartBrain {
 		this.gatherCooldown = 100 + r.nextInt(300);
 		this.houseBuilder = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.isPassive() ? 0.12F : 0.04F);
 		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
-		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.5F;
+		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.75F;
+		this.idleCraftCooldown = 200 + r.nextInt(1000);
 		// A few crafters also know how to enchant (skeletons have their own bow enchanting).
 		this.enchanter = this.combatCrafter && Juggernaut.canWearArmor(this.mob) && r.nextFloat() < 0.12F;
 		this.tunneler = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.25F;
@@ -953,6 +956,9 @@ public final class SmartBrain {
 		if (this.gardener && Gardening.tryPlant(this, level)) {
 			return;
 		}
+		if (CombatCrafting.tickIdle(this, level, griefing)) {
+			return;
+		}
 		if (this.personality == Personality.BUILDER && this.digTarget == null && Cleanup.tick(this, level)) {
 			return;
 		}
@@ -980,6 +986,7 @@ public final class SmartBrain {
 		if (this.supportCooldown > 0) this.supportCooldown--;
 		if (this.boatCooldown > 0) this.boatCooldown--;
 		if (this.crafterCooldown > 0 && this.crafterCooldown != Integer.MAX_VALUE) this.crafterCooldown--;
+		if (this.idleCraftCooldown > 0) this.idleCraftCooldown--;
 		if (this.imposterCooldown > 0) this.imposterCooldown--;
 		if (this.giftCooldown > 0) this.giftCooldown--;
 		if (this.griefCooldown > 0) this.griefCooldown--;

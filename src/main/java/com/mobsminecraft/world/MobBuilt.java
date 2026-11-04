@@ -35,14 +35,37 @@ public final class MobBuilt {
 		}
 	}
 
+	/** Forgets every mark inside a box (used when a test arena is wiped). */
+	public static void unmarkBox(ServerLevel level, BlockPos min, BlockPos max) {
+		LongOpenHashSet set = set(level);
+		set.removeIf((long l) -> {
+			int x = BlockPos.getX(l), y = BlockPos.getY(l), z = BlockPos.getZ(l);
+			return x >= min.getX() && x <= max.getX() && y >= min.getY() && y <= max.getY() && z >= min.getZ() && z <= max.getZ();
+		});
+		DIRTY.put(level, true);
+	}
+
 	public static void unmark(ServerLevel level, BlockPos pos) {
 		if (set(level).remove(pos.asLong())) {
 			DIRTY.put(level, true);
 		}
 	}
 
+	/**
+	 * Is there a mob-built block here? A mark whose block has since gone (blown up, mined, burned) is dropped,
+	 * so ruined structures don't keep the ground reserved forever.
+	 */
 	public static boolean contains(ServerLevel level, BlockPos pos) {
-		return set(level).contains(pos.asLong());
+		LongOpenHashSet set = set(level);
+		if (!set.contains(pos.asLong())) {
+			return false;
+		}
+		if (level.isLoaded(pos) && level.getBlockState(pos).isAir()) {
+			set.remove(pos.asLong());
+			DIRTY.put(level, true);
+			return false;
+		}
+		return true;
 	}
 
 	private static Path file(ServerLevel level) {

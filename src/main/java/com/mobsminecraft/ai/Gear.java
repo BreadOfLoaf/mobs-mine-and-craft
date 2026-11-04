@@ -70,6 +70,19 @@ final class Gear {
 		return canWeapon(mob) && weaponTier(mob.getMainHandItem()) < MAX_WEAPON;
 	}
 
+	/** True if some armour piece (or the weapon) is below the given tier and could be crafted up. */
+	static boolean hasUpgradeBelow(Mob mob, int tier) {
+		if (!Juggernaut.canWearArmor(mob)) {
+			return false;
+		}
+		for (EquipmentSlot slot : ARMOR) {
+			if (armorTier(mob.getItemBySlot(slot)) < tier) {
+				return true;
+			}
+		}
+		return canWeapon(mob) && weaponTier(mob.getMainHandItem()) < Math.min(tier - 1, MAX_WEAPON);
+	}
+
 	/** Upgrades the weakest piece by one tier. Returns the new item, or null. */
 	static ItemStack upgrade(SmartBrain brain, RandomSource r) {
 		Mob mob = brain.mob;

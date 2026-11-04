@@ -37,10 +37,25 @@ final class CombatCrafting {
 				return false;
 			}
 			double dist = mob.distanceTo(target);
-			if (dist < 6.0 || dist > 28.0) {
+			RandomSource r = mob.getRandom();
+			// Too close to craft: now and then fall back a few blocks first (an opening for the player).
+			if (dist < 6.0) {
+				if (brain.craftDisengage > 0) {
+					brain.craftDisengage--;
+					Personalities.keepAway(brain, target, 9.0, true);
+					return true;
+				}
+				if (mob.tickCount % 40 == 0 && r.nextFloat() < 0.35F) {
+					brain.craftDisengage = 80;
+					com.mobsminecraft.debug.AiStats.add("craft_fall_back");
+					return true;
+				}
 				return false;
 			}
-			RandomSource r = mob.getRandom();
+			brain.craftDisengage = 0;
+			if (dist > 28.0) {
+				return false;
+			}
 			brain.combatCraftCooldown = 180 + r.nextInt(300);
 			boolean playerAbove = target.getY() - mob.getY() > 2.5;
 			if (playerAbove && brain.ladders == 0) {
@@ -138,6 +153,30 @@ final class CombatCrafting {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Out of combat: now and then a crafting mob goes to a table and makes itself better armour or a better
+	 * weapon (up to iron; diamond is only crafted in the heat of battle). Returns true while busy.
+	 */
+	static boolean tickIdle(SmartBrain brain, ServerLevel level, boolean griefing) {
+		Mob mob = brain.mob;
+		if (brain.crafting != null) {
+			return tick(brain, level, null, griefing);
+		}
+		if (!brain.combatCrafter || !griefing || brain.idleCraftCooldown > 0 || !mob.onGround() || !Gear.hasUpgradeBelow(mob, 3)) {
+			return false;
+		}
+		RandomSource r = mob.getRandom();
+		brain.idleCraftCooldown = (brain.personality == Personality.CRAFTER ? 400 : 1200) + r.nextInt(1200);
+		brain.crafting = Craft.GEAR;
+		brain.craftTicks = 0;
+		brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.CRAFTING_TABLE));
+		if (brain.craftTable == null) {
+			brain.craftTable = brain.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
+		}
+		com.mobsminecraft.debug.AiStats.add("craft_idle_start");
+		return true;
 	}
 
 	// ------------------------------------------------------------------ anvils

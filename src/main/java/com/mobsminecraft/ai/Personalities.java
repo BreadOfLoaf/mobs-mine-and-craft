@@ -465,10 +465,15 @@ final class Personalities {
 			if (b.crafterCooldown > 0 || !mob.onGround()) {
 				return false;
 			}
-			b.crafterCooldown = 160 + mob.getRandom().nextInt(200);
+			b.crafterCooldown = 100 + mob.getRandom().nextInt(140);
 			Mob ally = needyAlly(level, mob);
 			if (ally == null) {
-				return false;
+				// Nobody around to craft for: work on its own kit instead.
+				if (Gear.hasUpgradeBelow(mob, 3)) {
+					ally = mob;
+				} else {
+					return false;
+				}
 			}
 			b.crafterFor = ally;
 			b.crafterTable = BlockWork.findNearest(level, mob.blockPosition(), 6, s -> s.is(Blocks.CRAFTING_TABLE));
@@ -546,18 +551,18 @@ final class Personalities {
 
 	private static Mob needyAlly(ServerLevel level, Mob mob) {
 		Mob best = null;
-		for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(14.0), m -> m != mob && m.isAlive() && m instanceof Enemy == mob instanceof Enemy)) {
+		for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(20.0), m -> m != mob && m.isAlive() && m instanceof Enemy == mob instanceof Enemy)) {
 			Integer last = ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain().crafterGiven.get(m.getUUID());
-			if (last != null && mob.tickCount - last < 2400) {
+			if (last != null && mob.tickCount - last < 600) {
 				continue; // already made something for this one recently (and maybe it couldn't use it)
 			}
 			if (!craftFor(m, null).isEmpty() && (best == null || m.distanceToSqr(mob) < best.distanceToSqr(mob))) {
 				best = m;
 			}
 		}
-		if (best == null && mob.getRandom().nextFloat() < 0.5F) {
+		if (best == null) {
 			// Everyone's kitted out: hand somebody a consumable instead.
-			List<Mob> any = level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(10.0), m -> m != mob && m.isAlive() && m instanceof Enemy == mob instanceof Enemy);
+			List<Mob> any = level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(16.0), m -> m != mob && m.isAlive() && m instanceof Enemy == mob instanceof Enemy);
 			if (!any.isEmpty()) {
 				best = any.get(mob.getRandom().nextInt(any.size()));
 			}

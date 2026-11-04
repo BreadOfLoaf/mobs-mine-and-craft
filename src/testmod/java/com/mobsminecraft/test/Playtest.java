@@ -90,6 +90,10 @@ public class Playtest implements ModInitializer {
 			}
 		},
 			mobs("zombie", 4, "skeleton", 2, "villager", 4, "cow", 2), -18, Behaviour.SPECTATE));
+		add(new Scenario("house_build_hostile", 3600, "8 zombie and skeleton builders each start a house (no villagers to fight).", (run, o) -> {},
+			mobs("zombie", 5, "skeleton", 3), -18, Behaviour.SPECTATE));
+		add(new Scenario("house_build_villagers", 3600, "8 villagers and cows each start a house (no monsters around).", (run, o) -> {},
+			mobs("villager", 6, "cow", 2), -18, Behaviour.SPECTATE));
 		add(new Scenario("passive_life", 3600, "Cows, sheep and villagers in a field with trees; spectator bot. What do they do?", (run, o) -> {
 			for (int i = 0; i < 10; i++) {
 				int tx = o.getX() - 30 + (i % 5) * 15;
@@ -198,6 +202,12 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 40, "skeleton", 20, "creeper", 10, "spider", 10, "villager", 15, "cow", 15, "pig", 10), 20, Behaviour.FIGHT));
 		add(new Scenario("crowd_vanilla", 1200, "The same 120 mobs with the mod's AI switched off (baseline).", (run, o) -> {},
 			mobs("zombie", 40, "skeleton", 20, "creeper", 10, "spider", 10, "villager", 15, "cow", 15, "pig", 10), 20, Behaviour.FIGHT));
+		add(new Scenario("craft_fight", 1800, "A natural mix of zombies and skeletons (plus two crafters) fighting a standing bot. How much crafting?", (run, o) -> {},
+			mobs("zombie", 10, "skeleton", 3), 14, Behaviour.STAND));
+		add(new Scenario("craft_idle", 1800, "The same mob mix with no player around (spectator far away). Do they craft when idle?", (run, o) -> {},
+			mobs("zombie", 10, "skeleton", 3), 10, Behaviour.SPECTATE));
+		add(new Scenario("role_check", 2400, "Two zombies of every personality around a sword-swinging bot: does each one do its job?", (run, o) -> {},
+			mobs("zombie", 20), 12, Behaviour.FIGHT));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -390,6 +400,7 @@ public class Playtest implements ModInitializer {
 			cmd("fill %d 120 %d %d 120 %d minecraft:grass_block", x - 40, z - 40, x + east, z + 40);
 			cmd("fill %d 121 %d %d 170 %d minecraft:air", x - 40, z - 40, x + east, z + 40);
 			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, east + 40);
+			com.mobsminecraft.world.MobBuilt.unmarkBox(this.level, new BlockPos(x - 40, 100, z - 40), new BlockPos(x + east, 190, z + 40));
 			this.scenario.setup().accept(this, this.origin);
 
 			if (this.scenario.bot() == Behaviour.SPECTATE) {
@@ -617,6 +628,8 @@ public class Playtest implements ModInitializer {
 						case "loot" -> { brain.debugPersonality("fighter"); if (pi++ % 2 == 0) brain.debugForce("greedy"); }
 						case "cleanup" -> { brain.debugPersonality("builder"); if (pi++ == 0) brain.debugForce("mess"); }
 						case "hero" -> brain.debugPersonality("hero");
+						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
+						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
 						case "anvil_warn" -> { brain.debugPersonality("tactician"); brain.debugForce("anvils"); }
 						case "gifters" -> brain.debugPersonality("gifter");
 						case "roles" -> brain.debugPersonality(new String[] {"builder", "crafter", "engineer", "mineman"}[pi++ % 4]);
@@ -639,7 +652,7 @@ public class Playtest implements ModInitializer {
 					((com.mobsminecraft.SmartMobHolder) this.tracked.get(0).mob).mmc$getBrain().debugForce("prospector");
 				}
 			}
-			if (this.ticks == 30 && this.scenario.name().equals("house_build")) {
+			if (this.ticks == 30 && this.scenario.name().startsWith("house_build")) {
 				for (Tracked t : this.tracked) {
 					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);
 				}
@@ -749,7 +762,7 @@ public class Playtest implements ModInitializer {
 			}
 			this.tracked.stream().filter(t -> t.lastStuckState != null).limit(6)
 				.forEach(t -> sb.append("  stuck ").append(t.type).append(": ").append(t.lastStuckState).append('\n'));
-			if (this.scenario.bot() == Behaviour.SPECTATE) {
+			if (this.scenario.bot() == Behaviour.SPECTATE && this.scenario.name().startsWith("house_build")) {
 				for (Tracked t : this.tracked) {
 					double prog = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().buildProgress();
 					sb.append(String.format(Locale.ROOT, "  builder %-9s alive=%s building=%s  [%s]%n", t.type, t.mob.isAlive(),
@@ -844,6 +857,15 @@ public class Playtest implements ModInitializer {
 				AiStats.brainTimeByType().entrySet().stream().sorted(Map.Entry.<String, Long>comparingByValue().reversed()).limit(8)
 					.forEach(e -> brainByType.append(String.format(Locale.ROOT, " %s=%.2f", e.getKey(), e.getValue() / 1e6 / n)));
 				sb.append(brainByType).append('\n');
+			}
+			if (this.scenario.name().equals("role_check")) {
+				Map<String, Integer> st = AiStats.snapshot();
+				java.util.function.Function<String, Integer> sum = prefix -> st.entrySet().stream().filter(e -> e.getKey().startsWith(prefix)).mapToInt(Map.Entry::getValue).sum();
+				sb.append(String.format(Locale.ROOT, "Roles: tactician crafts=%d falls_back=%d towers=%d | builder builds=%d cleanups=%d | engineer traps=%d orbits=%d | "
+						+ "crafter gave=%d | mineman torches=%d stashes=%d | imposter betrayals=%d kills=%d | hero transformed=%d | gifter gifts=%d | griefer tnt=%d breaks=%d%n",
+					sum.apply("craft:"), sum.apply("craft_fall_back"), sum.apply("tower"), sum.apply("build_started"), sum.apply("cleanup"),
+					sum.apply("rs_build:"), sum.apply("engineer_orbit"), sum.apply("crafter_gave"), sum.apply("mineman_torch"), sum.apply("mineman_stash"),
+					sum.apply("imposter_betrayal"), sum.apply("imposter_kill"), sum.apply("hero_transformed"), sum.apply("gift"), sum.apply("griefer_tnt"), sum.apply("griefer_break")));
 			}
 			sb.append("AI actions: ").append(AiStats.snapshot().isEmpty() ? "none" : AiStats.snapshot().toString()).append('\n');
 			String report = sb.toString();

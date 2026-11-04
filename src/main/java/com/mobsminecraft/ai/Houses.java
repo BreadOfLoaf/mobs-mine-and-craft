@@ -178,7 +178,12 @@ final class Houses {
 		Mob mob = brain.mob;
 		RandomSource r = mob.getRandom();
 		BlockPos c = mob.blockPosition();
-		if (cave != Outpost.isUnderground(level, mob) || tooCrowded(level, c)) {
+		if (cave != Outpost.isUnderground(level, mob)) {
+			com.mobsminecraft.debug.AiStats.add("house_refused:underground_mismatch");
+			return false;
+		}
+		if (tooCrowded(level, c)) {
+			com.mobsminecraft.debug.AiStats.add("house_refused:crowded");
 			return false;
 		}
 		int hx = 2 + r.nextInt(cave ? 2 : 4);
@@ -201,6 +206,7 @@ final class Houses {
 			for (int z = -hz - 1; z <= hz + 1; z++) {
 				for (int y = -1; y <= wallH; y++) {
 					if (MobBuilt.contains(level, c.offset(x, y, z))) {
+						com.mobsminecraft.debug.AiStats.add("house_refused:built_there");
 						return false;
 					}
 				}
@@ -224,6 +230,7 @@ final class Houses {
 			}
 		}
 		if (obstacles > hx + hz) {
+			com.mobsminecraft.debug.AiStats.add("house_refused:obstacles");
 			return false;
 		}
 
