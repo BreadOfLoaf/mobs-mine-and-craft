@@ -210,6 +210,8 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 20), 12, Behaviour.FIGHT));
 		add(new Scenario("role_world", 9600, "Survival world: plus 2 zombies of every personality spawned near the bot. What does each one spend its time doing?",
 			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
+			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
 			mobs("wolf", 4), 3, Behaviour.FIGHT));
 		add(new Scenario("role_world_calm", 9600, "Survival world plus 2 zombies of each working personality (no imposters or griefers to kill them off).",
@@ -289,6 +291,10 @@ public class Playtest implements ModInitializer {
 		});
 
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
+			if (current != null && current.brain != null && current.bot != null && source.getEntity() == current.bot.player) {
+				current.brain.kills++;
+				AiStats.add("bot_kill");
+			}
 			if (current != null && entity instanceof Mob m && m.entityTags().contains(current.runTag)) {
 				AiStats.add("death:" + ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain().personalityName() + ":" + source.type().msgId()
 					+ (source.getEntity() != null ? ":" + BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath()
@@ -299,6 +305,10 @@ public class Playtest implements ModInitializer {
 		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
 			if (Trainer.active != null && Trainer.active.onDamage(entity, source, amount)) {
 				return false;
+			}
+			if (current != null && current.brain != null && current.bot != null && entity != current.bot.player && source.getEntity() == current.bot.player
+				&& source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow) {
+				current.brain.arrowHits++;
 			}
 			if (current != null && source.getEntity() == null && source.getDirectEntity() != null
 				&& (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow
@@ -450,7 +460,8 @@ public class Playtest implements ModInitializer {
 				this.bot.player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
 			}
 			if (this.scenario.bot() == Behaviour.FIGHT) {
-				this.bot.hold(new ItemStack(Items.IRON_SWORD));
+				PlayerBrain.giveKit(this.bot);
+				this.brain = new PlayerBrain(this.bot, this.level, PlayerBrain.Mode.ARENA, this.botStart);
 			}
 
 			AiStats.reset();
@@ -463,7 +474,8 @@ public class Playtest implements ModInitializer {
 		}
 
 		/** An ordinary generated world: no arena, natural mob spawning, time passing, starting at dusk. */
-		private SurvivalBot survivalBot;
+		/** Plays the bot like a person (FIGHT and PLAYER scenarios). */
+		PlayerBrain brain;
 		private final Map<java.util.UUID, String> census = new LinkedHashMap<>();
 		private final Map<String, Map<String, Integer>> activityByPersona = new java.util.TreeMap<>();
 		private int buildersBusyMax;
@@ -497,8 +509,8 @@ public class Playtest implements ModInitializer {
 			}
 			this.botStart = new Vec3(bx + 0.5, y, bz + 0.5);
 			this.bot = Bot.spawn(this.server, this.level, "Tester", this.botStart);
-			this.bot.hold(new ItemStack(Items.IRON_SWORD));
-			this.survivalBot = new SurvivalBot(this.bot, this.level);
+			PlayerBrain.giveKit(this.bot);
+			this.brain = new PlayerBrain(this.bot, this.level, PlayerBrain.Mode.SURVIVAL, this.botStart);
 			if (this.scenario.name().startsWith("role_world")) {
 				String[] personas = this.scenario.name().equals("role_world_calm")
 					? new String[] {"fighter", "tactician", "builder", "engineer", "crafter", "mineman", "hero", "gifter"}
@@ -611,31 +623,12 @@ public class Playtest implements ModInitializer {
 					}
 				}
 				case PLAYER -> {
-					this.survivalBot.tick();
+					this.brain.tick();
 					if (this.ticks % 200 == 0) {
 						this.takeCensus();
 					}
 				}
-				case FIGHT -> {
-					if (this.ticks % 12 == 0) {
-						Mob nearest = null;
-						for (Tracked t : this.tracked) {
-							if (t.mob.isAlive() && t.mob.distanceTo(this.bot.player) < 3.5
-								&& (nearest == null || t.mob.distanceTo(this.bot.player) < nearest.distanceTo(this.bot.player))) {
-								nearest = t.mob;
-							}
-						}
-						if (nearest != null) {
-							if (nearest.isBlocking()) {
-								AiStats.add("bot_hit_blocked");
-							}
-							this.bot.attack(nearest);
-							if (!nearest.isAlive()) {
-								this.kills++;
-							}
-						}
-					}
-				}
+				case FIGHT -> this.brain.tick();
 				default -> {
 				}
 			}
@@ -813,6 +806,9 @@ public class Playtest implements ModInitializer {
 			if (this.firstHit < 0) {
 				this.firstHit = this.ticks;
 			}
+			if (this.brain != null) {
+				this.brain.onHurt(source, amount);
+			}
 		}
 
 		Result finish() {
@@ -823,8 +819,11 @@ public class Playtest implements ModInitializer {
 				this.firstHit < 0 ? "never" : String.format(Locale.ROOT, "%.1fs", this.firstHit / 20.0)));
 			this.damageBy.entrySet().stream().sorted(Map.Entry.<String, Double>comparingByValue().reversed())
 				.forEach(e -> sb.append(String.format(Locale.ROOT, "  %-28s %6.1f%n", e.getKey(), e.getValue())));
+			if (this.brain != null) {
+				sb.append(this.brain.summary());
+			}
 			if (this.scenario.bot() == Behaviour.FIGHT) {
-				sb.append("Bot kills: ").append(this.kills).append('\n');
+				sb.append("Bot kills: ").append(this.brain != null ? this.brain.kills : this.kills).append('\n');
 			}
 
 			Map<String, List<Tracked>> byType = new LinkedHashMap<>();
@@ -929,8 +928,7 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			if (this.scenario.bot() == Behaviour.PLAYER) {
-				sb.append(String.format(Locale.ROOT, "Bot: mined %d blocks, placed %d, swung at mobs %d times; ended at %s (game time %d)%n",
-					this.survivalBot.blocksMined, this.survivalBot.blocksPlaced, this.survivalBot.attacks, this.bot.player.blockPosition(), this.level.getGameTime() % 24000));
+				sb.append(String.format(Locale.ROOT, "Bot ended at %s (game time %d)%n", this.bot.player.blockPosition(), this.level.getGameTime() % 24000));
 				Map<String, Integer> byPersona = new java.util.TreeMap<>();
 				Map<String, Integer> seenTypes = new java.util.TreeMap<>();
 				for (String v : this.census.values()) {
