@@ -248,6 +248,13 @@ public final class SmartBrain {
 		return this.housePlan == null ? -1 : this.houseIndex / (double) this.housePlan.size();
 	}
 
+	/** Test hook: make this mob a redstone engineer, ready to build a trap now. */
+	public void debugMakeEngineer() {
+		this.engineer = true;
+		this.rsCooldown = 0;
+		this.combatCrafter = false;
+	}
+
 	/** Test hook: start a build right here (house above ground, underground build below). */
 	public boolean debugStartBuild(ServerLevel level) {
 		if (this.housePlan == null) {
@@ -281,8 +288,8 @@ public final class SmartBrain {
 		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
 		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.4F;
 		this.combatCraftCooldown = 200 + r.nextInt(400);
-		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.2F;
-		this.engineer = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
+		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.35F;
+		this.engineer = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
 		this.rsCooldown = 100 + r.nextInt(300);
 		this.outpostCooldown = 200 + r.nextInt(600);
 		this.cookCooldown = 400 + r.nextInt(1200);
@@ -1258,7 +1265,7 @@ public final class SmartBrain {
 		if (Outpost.isUnderground(level, this.mob)) {
 			Underground.plan(this, level);
 		} else {
-			Houses.plan(this, level, Houses.random(this.mob.getRandom()), false);
+			Houses.plan(this, level, Houses.forBiome(level, this.mob.blockPosition(), this.mob.getRandom()), false);
 		}
 		if (this.housePlan != null) {
 			com.mobsminecraft.debug.AiStats.add("build_started");

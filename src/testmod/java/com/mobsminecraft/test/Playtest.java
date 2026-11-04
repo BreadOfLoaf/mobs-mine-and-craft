@@ -82,7 +82,13 @@ public class Playtest implements ModInitializer {
 			run.cmd("fill %d 121 %d %d 121 %d minecraft:coal_ore", x - 9, z - 10, x - 7, z - 10);
 			run.cmd("fill %d 121 %d %d 121 %d minecraft:iron_ore", x + 7, z + 10, x + 9, z + 10);
 		}, mobs("zombie", 5, "skeleton", 3, "spider", 2, "creeper", 1), 8, Behaviour.STAND));
-		add(new Scenario("house_build", 3600, "12 builders each start a house (no combat; spectator bot far away). Do they finish?", (run, o) -> {},
+		add(new Scenario("house_build", 3600, "12 builders each start a house in four biome strips (savanna, snowy taiga, desert, jungle).", (run, o) -> {
+			String[] biomes = {"savanna", "snowy_taiga", "desert", "jungle"};
+			for (int i = 0; i < 4; i++) {
+				int x0 = o.getX() - 36 + i * 18;
+				run.cmd("fillbiome %d 100 %d %d 170 %d minecraft:%s", x0, o.getZ() - 40, x0 + 17, o.getZ() + 40, biomes[i]);
+			}
+		},
 			mobs("zombie", 4, "skeleton", 2, "villager", 4, "cow", 2), -18, Behaviour.SPECTATE));
 		add(new Scenario("passive_life", 3600, "Cows, sheep and villagers in a field with trees; spectator bot. What do they do?", (run, o) -> {
 			for (int i = 0; i < 10; i++) {
@@ -92,6 +98,8 @@ public class Playtest implements ModInitializer {
 			}
 			run.cmd("fill %d 121 %d %d 123 %d minecraft:stone", o.getX() + 25, o.getZ() - 5, o.getX() + 28, o.getZ() + 5);
 		}, mobs("cow", 6, "sheep", 4, "villager", 4, "pig", 2), 14, Behaviour.SPECTATE));
+		add(new Scenario("trap_test", 1200, "Three engineer zombies build redstone traps against a standing bot. Do the traps hit?", (run, o) -> {},
+			mobs("zombie", 3), 9, Behaviour.STAND));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -139,6 +147,11 @@ public class Playtest implements ModInitializer {
 
 		// The bot never actually takes damage: every hit is recorded and cancelled.
 		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
+			if (current != null && source.getEntity() == null && source.getDirectEntity() != null
+				&& (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow
+					|| source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball)) {
+				AiStats.add("trap_hit:" + BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).getPath());
+			}
 			if (current != null && current.bot != null && entity == current.bot.player) {
 				current.recordDamage(source, amount);
 				return false;
@@ -343,6 +356,11 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			this.bot.tick();
+			if (this.ticks == 5 && this.scenario.name().equals("trap_test")) {
+				for (Tracked t : this.tracked) {
+					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugMakeEngineer();
+				}
+			}
 			if (this.ticks == 20 && this.scenario.name().equals("house_build")) {
 				for (Tracked t : this.tracked) {
 					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);

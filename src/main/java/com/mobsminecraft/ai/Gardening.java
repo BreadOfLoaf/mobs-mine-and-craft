@@ -98,7 +98,7 @@ final class Gardening {
 	private static BlockPos findSoil(ServerLevel level, BlockPos center, int radius, RandomSource r) {
 		for (int i = 0; i < 12; i++) {
 			BlockPos p = center.offset(r.nextInt(radius * 2 + 1) - radius, 0, r.nextInt(radius * 2 + 1) - radius);
-			if (level.getBlockState(p).canBeReplaced() && level.getFluidState(p).isEmpty() && level.getBlockState(p.below()).is(BlockTags.DIRT)) {
+			if (level.getBlockState(p).canBeReplaced() && level.getFluidState(p).isEmpty() && (level.getBlockState(p.below()).is(BlockTags.DIRT) || level.getBlockState(p.below()).is(BlockTags.GRASS_BLOCKS))) {
 				return p;
 			}
 		}

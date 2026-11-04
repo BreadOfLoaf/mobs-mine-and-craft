@@ -47,7 +47,7 @@ final class CombatCrafting {
 				brain.crafting = Craft.LADDERS;
 			} else {
 				int roll = r.nextInt(100);
-				brain.crafting = roll < 35 ? Craft.ANVILS : roll < 43 ? Craft.LAVA_BUCKET : roll < 70 ? Craft.WATER_BUCKET : Craft.LADDERS;
+				brain.crafting = roll < 45 ? Craft.ANVILS : roll < 52 ? Craft.LAVA_BUCKET : roll < 75 ? Craft.WATER_BUCKET : Craft.LADDERS;
 			}
 			brain.craftTicks = 0;
 			brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.CRAFTING_TABLE));
@@ -79,7 +79,7 @@ final class CombatCrafting {
 				case LADDERS -> brain.ladders += 16;
 				case LAVA_BUCKET -> Consumable.addCarried(brain, Consumable.LAVA_BUCKET, 1, null);
 				case WATER_BUCKET -> Consumable.addCarried(brain, Consumable.WATER_BUCKET, 2, null);
-				case ANVILS -> brain.anvils += 2;
+				case ANVILS -> brain.anvils += 3;
 			}
 			level.playSound(null, mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
 			com.mobsminecraft.debug.AiStats.add("craft:" + brain.crafting.name().toLowerCase());
@@ -90,39 +90,62 @@ final class CombatCrafting {
 
 	// ------------------------------------------------------------------ anvils
 
-	/** Places a crafted anvil a few blocks above where the player is heading, so it falls on them. */
+	/**
+	 * Drops crafted anvils straight down onto the player: from the highest open spot above their head
+	 * (up to 10 blocks, or just under a ceiling, so it works indoors too). Sometimes a volley of three.
+	 */
 	static void dropAnvil(SmartBrain brain, ServerLevel level, LivingEntity target) {
 		Mob mob = brain.mob;
-		if (brain.anvils <= 0 || brain.anvilCooldown > 0 || mob.distanceTo(target) > 8.0F || !mob.hasLineOfSight(target)) {
+		double dist = mob.distanceTo(target);
+		if (brain.anvils <= 0 || brain.anvilCooldown > 0 || dist > 10.0 || (!mob.hasLineOfSight(target) && dist > 8.0)) {
 			return;
 		}
 		RandomSource r = mob.getRandom();
-		brain.anvilCooldown = 100 + r.nextInt(80);
-		Vec3 aim = target.position().add(target.getKnownMovement().multiply(6.0, 0.0, 6.0));
-		BlockPos drop = findDropSpot(level, BlockPos.containing(aim));
+		brain.anvilCooldown = 80 + r.nextInt(60);
+		BlockPos head = BlockPos.containing(target.position().add(target.getKnownMovement().multiply(2.0, 0.0, 2.0)));
+		int dropped = 0;
+		if (dropOver(level, head, r)) {
+			dropped++;
+		}
+		if (brain.anvils >= 3 && r.nextFloat() < 0.35F) {
+			for (int i = 0; i < 2; i++) {
+				if (dropOver(level, head.relative(Direction.Plane.HORIZONTAL.getRandomDirection(r)), r)) {
+					dropped++;
+				}
+			}
+		}
+		if (dropped > 0) {
+			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			brain.anvils -= dropped;
+			for (int i = 0; i < dropped; i++) {
+				com.mobsminecraft.debug.AiStats.add("anvil_drop");
+			}
+		}
+	}
+
+	private static boolean dropOver(ServerLevel level, BlockPos column, RandomSource r) {
+		BlockPos drop = findDropSpot(level, column);
 		if (drop == null) {
-			return;
+			return false;
 		}
 		BlockState anvil = Blocks.ANVIL.defaultBlockState().setValue(AnvilBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(r));
 		level.setBlock(drop, anvil, Block.UPDATE_ALL);
 		level.playSound(null, drop, SoundEvents.ANVIL_PLACE, SoundSource.HOSTILE, 0.6F, 1.0F);
-		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
-		brain.anvils--;
-		com.mobsminecraft.debug.AiStats.add("anvil_drop");
+		return true;
 	}
 
-	/** Highest spot 3-6 blocks up with open air all the way down to the player's column. */
+	/** Highest open spot (3-10 blocks up) above the player's column, stopping under the first ceiling. */
 	private static BlockPos findDropSpot(ServerLevel level, BlockPos col) {
-		for (int h = 6; h >= 3; h--) {
-			boolean clear = true;
-			for (int y = 0; y <= h && clear; y++) {
-				clear = level.getBlockState(col.above(y)).canBeReplaced();
+		BlockPos best = null;
+		for (int h = 0; h <= 10; h++) {
+			if (!level.getBlockState(col.above(h)).canBeReplaced()) {
+				break;
 			}
-			if (clear) {
-				return col.above(h);
+			if (h >= 3) {
+				best = col.above(h);
 			}
 		}
-		return null;
+		return best;
 	}
 
 	// ------------------------------------------------------------------ ladders

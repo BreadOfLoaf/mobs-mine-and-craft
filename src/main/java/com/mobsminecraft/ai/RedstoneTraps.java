@@ -64,15 +64,19 @@ final class RedstoneTraps {
 			return false;
 		}
 		double dist = mob.distanceTo(target);
-		if (dist < 7.0 || dist > 24.0 || !mob.hasLineOfSight(target) || waveSize(level, mob, target) < 3) {
+		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || waveSize(level, mob, target) < 2) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
-		brain.rsCooldown = 600 + r.nextInt(600);
+		brain.rsCooldown = 400 + r.nextInt(300);
 		Vec3 d = target.position().subtract(mob.position());
 		Direction dir = Direction.getApproximateNearest(d.x, 0.0, d.z);
+		// Dispensers only reach about 11 blocks; farther away, send a TNT cart down a track instead.
+		if (dist > 11.0) {
+			return planCart(brain, level, dir, r);
+		}
 		int roll = r.nextInt(100);
-		Kind first = roll < 40 ? Kind.ARROWS : roll < 70 ? Kind.FIRE_CHARGES : Kind.TNT_CART;
+		Kind first = roll < 45 ? Kind.ARROWS : roll < 80 ? Kind.FIRE_CHARGES : Kind.TNT_CART;
 		if (first == Kind.TNT_CART && planCart(brain, level, dir, r)) {
 			return true;
 		}
@@ -82,18 +86,36 @@ final class RedstoneTraps {
 	// ------------------------------------------------------------------ planning
 
 	private static boolean planDispenser(SmartBrain brain, ServerLevel level, Direction dir, Kind kind) {
-		BlockPos spot = brain.mob.blockPosition().relative(dir);
+		// Line the dispenser up with the player's row or column so its straight shots actually hit.
+		BlockPos here = brain.mob.blockPosition();
+		LivingEntity target = brain.mob.getTarget();
+		BlockPos spot = here.relative(dir);
+		if (target != null) {
+			BlockPos t = target.blockPosition();
+			int dx = t.getX() - here.getX();
+			int dz = t.getZ() - here.getZ();
+			if (Math.abs(dz) <= 3 && dx != 0) {
+				dir = dx > 0 ? Direction.EAST : Direction.WEST;
+				spot = new BlockPos(here.getX() + dir.getStepX(), here.getY(), t.getZ());
+			} else if (Math.abs(dx) <= 3 && dz != 0) {
+				dir = dz > 0 ? Direction.SOUTH : Direction.NORTH;
+				spot = new BlockPos(t.getX(), here.getY(), here.getZ() + dir.getStepZ());
+			}
+		}
+		// Raised on a block so it fires from chest height; arrows from the ground drop into the dirt.
 		if (!level.getBlockState(spot).canBeReplaced() || !level.getBlockState(spot.above()).canBeReplaced()
-			|| !BlockWork.isFloor(level, spot.below())) {
+			|| !level.getBlockState(spot.above(2)).canBeReplaced() || !BlockWork.isFloor(level, spot.below())) {
 			return false;
 		}
 		List<BlockPos> plan = new ArrayList<>();
 		List<BlockState> states = new ArrayList<>();
 		plan.add(spot);
-		states.add(Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, dir));
+		states.add(Blocks.COBBLESTONE.defaultBlockState());
 		plan.add(spot.above());
+		states.add(Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, dir));
+		plan.add(spot.above(2));
 		states.add(button(dir));
-		start(brain, kind, plan, states, spot.above(), dir);
+		start(brain, kind, plan, states, spot.above(2), dir);
 		return true;
 	}
 
@@ -166,7 +188,16 @@ final class RedstoneTraps {
 			BlockState s = brain.rsStates.get(brain.rsIndex);
 			brain.rsIndex++;
 			mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
-			if (brain.place(level, p, s, false) && s.is(Blocks.DISPENSER) && level.getBlockEntity(p) instanceof DispenserBlockEntity dispenser) {
+			boolean placed = brain.place(level, p, s, false);
+			boolean essential = s.is(Blocks.DISPENSER) || s.is(Blocks.COBBLESTONE) || s.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock;
+			if (!placed && essential && !level.getBlockState(p).is(s.getBlock())) {
+				// Something (usually another mob) is in the way: give up and try again shortly, rather than build half a trap.
+				com.mobsminecraft.debug.AiStats.add("rs_blocked");
+				brain.rsPlan = null;
+				brain.rsCooldown = 60;
+				return false;
+			}
+			if (placed && s.is(Blocks.DISPENSER) && level.getBlockEntity(p) instanceof DispenserBlockEntity dispenser) {
 				dispenser.insertItem(brain.rsKind == Kind.FIRE_CHARGES ? new ItemStack(Items.FIRE_CHARGE, 16) : new ItemStack(Items.ARROW, 64));
 			}
 			return true;
@@ -199,9 +230,12 @@ final class RedstoneTraps {
 	private static boolean operate(SmartBrain brain, ServerLevel level, LivingEntity target) {
 		Mob mob = brain.mob;
 		BlockState state = level.getBlockState(brain.rsButton);
-		boolean done = brain.rsPresses <= 0 || ++brain.rsOperateTicks > 400 || !(state.getBlock() instanceof ButtonBlock button)
-			|| mob.distanceToSqr(Vec3.atCenterOf(brain.rsButton)) > 16.0;
+		String why = brain.rsPresses <= 0 ? "used_up" : ++brain.rsOperateTicks > 400 ? "timeout"
+			: !(state.getBlock() instanceof ButtonBlock) ? "no_button:" + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath()
+			: mob.distanceToSqr(Vec3.atCenterOf(brain.rsButton)) > 16.0 ? "walked_away" : null;
+		boolean done = why != null;
 		if (done) {
+			com.mobsminecraft.debug.AiStats.add("rs_end:" + why);
 			brain.rsButton = null;
 			return false;
 		}
@@ -229,6 +263,6 @@ final class RedstoneTraps {
 		Direction dir = brain.rsDir;
 		double ahead = (target.getX() - (dispenser.getX() + 0.5)) * dir.getStepX() + (target.getZ() - (dispenser.getZ() + 0.5)) * dir.getStepZ();
 		double across = Math.abs((target.getX() - (dispenser.getX() + 0.5)) * dir.getStepZ() - (target.getZ() - (dispenser.getZ() + 0.5)) * dir.getStepX());
-		return ahead > 1.0 && ahead < 22.0 && across < 1.5 + ahead * 0.35 && Math.abs(target.getY() - dispenser.getY()) < 3.0;
+		return ahead > 1.0 && ahead < 12.0 && across < 1.0 + ahead * 0.1 && Math.abs(target.getY() + 1.0 - dispenser.getY()) < 2.0;
 	}
 }

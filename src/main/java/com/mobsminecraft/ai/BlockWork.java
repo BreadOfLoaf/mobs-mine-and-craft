@@ -116,13 +116,13 @@ public final class BlockWork {
 		if (state.is(BlockTags.LOGS)) {
 			return findNearest(level, pos, 2, s -> s.is(BlockTags.LEAVES)) != null;
 		}
-		return state.is(BlockTags.DIRT) || state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.BASE_STONE_NETHER)
+		return state.is(BlockTags.DIRT) || state.is(BlockTags.GRASS_BLOCKS) || state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.BASE_STONE_NETHER)
 			|| state.is(BlockTags.SAND) || state.is(Blocks.GRAVEL);
 	}
 
 	/** Blocks that the mob keeps for its own building stock instead of dropping. */
 	public static boolean isBuildingMaterial(BlockState state) {
-		return state.is(BlockTags.DIRT)
+		return state.is(BlockTags.DIRT) || state.is(BlockTags.GRASS_BLOCKS)
 			|| state.is(BlockTags.LOGS)
 			|| state.is(BlockTags.PLANKS)
 			|| state.is(BlockTags.BASE_STONE_OVERWORLD)

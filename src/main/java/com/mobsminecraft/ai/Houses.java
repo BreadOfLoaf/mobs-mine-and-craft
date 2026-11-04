@@ -46,6 +46,20 @@ final class Houses {
 	private static final Palette ACACIA = wood(Blocks.ACACIA_PLANKS, Blocks.ACACIA_LOG, Blocks.ACACIA_STAIRS, Blocks.ACACIA_DOOR);
 	private static final Palette DARK_OAK = wood(Blocks.DARK_OAK_PLANKS, Blocks.DARK_OAK_LOG, Blocks.SPRUCE_STAIRS, Blocks.DARK_OAK_DOOR);
 	private static final Palette CHERRY = wood(Blocks.CHERRY_PLANKS, Blocks.CHERRY_LOG, Blocks.CHERRY_STAIRS, Blocks.CHERRY_DOOR);
+	private static final Palette MANGROVE = wood(Blocks.MANGROVE_PLANKS, Blocks.MANGROVE_LOG, Blocks.MANGROVE_STAIRS, Blocks.MANGROVE_DOOR);
+	private static final Palette PALE_OAK = wood(Blocks.PALE_OAK_PLANKS, Blocks.PALE_OAK_LOG, Blocks.PALE_OAK_STAIRS, Blocks.PALE_OAK_DOOR);
+	private static final Palette BAMBOO = new Palette(Blocks.BAMBOO_PLANKS, Blocks.BAMBOO_BLOCK, Blocks.BAMBOO_PLANKS, Blocks.BAMBOO_STAIRS,
+		Blocks.BAMBOO_PLANKS, Blocks.BAMBOO_DOOR, Blocks.GLASS_PANE);
+	private static final Palette SANDSTONE = new Palette(Blocks.SANDSTONE, Blocks.CUT_SANDSTONE, Blocks.SANDSTONE, Blocks.SANDSTONE_STAIRS,
+		Blocks.BIRCH_PLANKS, Blocks.JUNGLE_DOOR, Blocks.GLASS_PANE);
+	private static final Palette RED_SANDSTONE = new Palette(Blocks.RED_SANDSTONE, Blocks.TERRACOTTA, Blocks.RED_SANDSTONE, Blocks.RED_SANDSTONE_STAIRS,
+		Blocks.ACACIA_PLANKS, Blocks.ACACIA_DOOR, Blocks.GLASS_PANE);
+	private static final Palette SNOWY_SPRUCE = new Palette(Blocks.SPRUCE_PLANKS, Blocks.STRIPPED_SPRUCE_LOG, Blocks.SPRUCE_PLANKS, Blocks.SPRUCE_STAIRS,
+		Blocks.SPRUCE_PLANKS, Blocks.SPRUCE_DOOR, Blocks.GLASS_PANE);
+	private static final Palette STONE = new Palette(Blocks.COBBLESTONE, Blocks.OAK_LOG, Blocks.STONE_BRICKS, Blocks.STONE_BRICK_STAIRS,
+		Blocks.OAK_PLANKS, Blocks.OAK_DOOR, Blocks.GLASS_PANE);
+	private static final Palette BRICK = new Palette(Blocks.BRICKS, Blocks.STONE_BRICKS, Blocks.DARK_OAK_PLANKS, Blocks.DARK_OAK_STAIRS,
+		Blocks.SPRUCE_PLANKS, Blocks.DARK_OAK_DOOR, Blocks.GLASS_PANE);
 
 	private static final Palette[] ALL = {
 		OAK, SPRUCE, BIRCH, JUNGLE, ACACIA, DARK_OAK, CHERRY,
@@ -93,6 +107,30 @@ final class Houses {
 		return false;
 	}
 
+	/**
+	 * A house style that fits where it's built: acacia in savannas, spruce in taigas and snowy places,
+	 * sandstone in deserts, terracotta in badlands, and so on. Plains and forests mix oak and birch with
+	 * the odd stone or brick house.
+	 */
+	static Palette forBiome(ServerLevel level, BlockPos pos, RandomSource r) {
+		String biome = level.getBiome(pos).unwrapKey().map(k -> k.identifier().getPath()).orElse("plains");
+		if (biome.contains("desert") || biome.contains("beach")) return r.nextFloat() < 0.8F ? SANDSTONE : ACACIA;
+		if (biome.contains("badlands")) return r.nextFloat() < 0.7F ? RED_SANDSTONE : ACACIA;
+		if (biome.contains("savanna")) return ACACIA;
+		if (biome.contains("snowy") || biome.contains("frozen") || biome.contains("ice") || biome.contains("grove")
+			|| biome.contains("peaks") || biome.contains("slopes")) return r.nextFloat() < 0.7F ? SNOWY_SPRUCE : SPRUCE;
+		if (biome.contains("taiga")) return SPRUCE;
+		if (biome.contains("bamboo")) return BAMBOO;
+		if (biome.contains("jungle")) return JUNGLE;
+		if (biome.contains("pale_garden")) return PALE_OAK;
+		if (biome.contains("dark_forest")) return DARK_OAK;
+		if (biome.contains("cherry")) return CHERRY;
+		if (biome.contains("mangrove") || biome.contains("swamp")) return MANGROVE;
+		if (biome.contains("birch")) return BIRCH;
+		float f = r.nextFloat();
+		return f < 0.55F ? OAK : f < 0.7F ? BIRCH : f < 0.85F ? STONE : BRICK;
+	}
+
 	/** The house style for the wood a mob chopped, so passive mobs build with what they gathered. */
 	static Palette forLog(Block log) {
 		if (log == Blocks.SPRUCE_LOG) return SPRUCE;
@@ -101,6 +139,8 @@ final class Houses {
 		if (log == Blocks.ACACIA_LOG) return ACACIA;
 		if (log == Blocks.DARK_OAK_LOG) return DARK_OAK;
 		if (log == Blocks.CHERRY_LOG) return CHERRY;
+		if (log == Blocks.MANGROVE_LOG) return MANGROVE;
+		if (log == Blocks.PALE_OAK_LOG) return PALE_OAK;
 		return OAK;
 	}
 

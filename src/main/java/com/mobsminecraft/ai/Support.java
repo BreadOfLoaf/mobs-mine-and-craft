@@ -34,7 +34,7 @@ final class Support {
 			return;
 		}
 		brain.supportCooldown = 20;
-		if (RedstoneTraps.waveSize(level, mob, target) < 3) {
+		if (RedstoneTraps.waveSize(level, mob, target) < 2) {
 			return;
 		}
 		RandomSource r = mob.getRandom();
@@ -74,7 +74,7 @@ final class Support {
 		Projectile.spawnProjectileUsingShoot(thrown, level, stack, dx, dy + horiz * 0.2, dz, 0.75F, 2.0F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		level.playSound(null, mob.getX(), mob.getY(), mob.getZ(), SoundEvents.SPLASH_POTION_THROW, SoundSource.HOSTILE, 1.0F, 0.9F);
-		brain.supportCooldown = 80 + r.nextInt(60);
+		brain.supportCooldown = 50 + r.nextInt(40);
 		com.mobsminecraft.debug.AiStats.add("support_potion");
 	}
 }
