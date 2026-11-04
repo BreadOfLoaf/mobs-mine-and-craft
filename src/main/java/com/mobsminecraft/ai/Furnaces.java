@@ -126,7 +126,8 @@ final class Furnaces {
 		Mob mob = brain.mob;
 		boolean hostile = !brain.isPassive();
 		if (brain.cookPos == null) {
-			if (brain.cookCooldown > 0 || !griefing || !mob.onGround() || (hostile && brain.rawMeat <= 0)) {
+			boolean cooks = !hostile || brain.personality == Personality.TACTICIAN || brain.personality == Personality.HERO || brain.personality == Personality.CRAFTER;
+			if (!cooks || brain.cookCooldown > 0 || !griefing || !mob.onGround() || (hostile && brain.rawMeat <= 0)) {
 				return false;
 			}
 			RandomSource r = mob.getRandom();
@@ -208,7 +209,7 @@ final class Furnaces {
 			brain.cookPos = null;
 			return false;
 		}
-		if (++brain.cookTicks > 400) {
+		if (++brain.cookTicks > (hostile ? 260 : 400)) {
 			brain.cookPos = null;
 			return false;
 		}

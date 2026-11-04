@@ -88,6 +88,9 @@ final class Looting {
 		if (b.personality == Personality.MINEMAN) {
 			return Personalities.isOreItem(s);
 		}
+		if (Wolves.isWildWolf(b)) {
+			return Wolves.wants(b, s);
+		}
 		if (b.isPassive()) {
 			return false;
 		}

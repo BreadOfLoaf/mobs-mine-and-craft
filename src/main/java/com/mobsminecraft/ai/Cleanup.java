@@ -45,8 +45,8 @@ final class Cleanup {
 			return false;
 		}
 		b.cleanupCooldown = 30;
-		// Not while there's a fight going on around here.
-		if (level.getNearestPlayer(mob, 16.0) instanceof net.minecraft.world.entity.player.Player p && !p.isCreative() && !p.isSpectator()) {
+		// Not in the middle of a fight.
+		if (mob.getTarget() != null) {
 			return false;
 		}
 		BlockPos here = mob.blockPosition();

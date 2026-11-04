@@ -208,6 +208,12 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 10, "skeleton", 3), 10, Behaviour.SPECTATE));
 		add(new Scenario("role_check", 2400, "Two zombies of every personality around a sword-swinging bot: does each one do its job?", (run, o) -> {},
 			mobs("zombie", 20), 12, Behaviour.FIGHT));
+		add(new Scenario("role_world", 9600, "Survival world: plus 2 zombies of every personality spawned near the bot. What does each one spend its time doing?",
+			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
+			mobs("wolf", 4), 3, Behaviour.FIGHT));
+		add(new Scenario("role_world_calm", 9600, "Survival world plus 2 zombies of each working personality (no imposters or griefers to kill them off).",
+			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -426,6 +432,7 @@ public class Playtest implements ModInitializer {
 		/** An ordinary generated world: no arena, natural mob spawning, time passing, starting at dusk. */
 		private SurvivalBot survivalBot;
 		private final Map<java.util.UUID, String> census = new LinkedHashMap<>();
+		private final Map<String, Map<String, Integer>> activityByPersona = new java.util.TreeMap<>();
 		private int buildersBusyMax;
 
 		private void startSurvival() {
@@ -459,6 +466,17 @@ public class Playtest implements ModInitializer {
 			this.bot = Bot.spawn(this.server, this.level, "Tester", this.botStart);
 			this.bot.hold(new ItemStack(Items.IRON_SWORD));
 			this.survivalBot = new SurvivalBot(this.bot, this.level);
+			if (this.scenario.name().startsWith("role_world")) {
+				String[] personas = this.scenario.name().equals("role_world_calm")
+					? new String[] {"fighter", "tactician", "builder", "engineer", "crafter", "mineman", "hero", "gifter"}
+					: new String[] {"fighter", "tactician", "builder", "engineer", "crafter", "mineman", "imposter", "hero", "gifter", "griefer"};
+				for (int i = 0; i < personas.length * 2; i++) {
+					double a = i * Math.PI * 2 / (personas.length * 2);
+					int mx = (int) (this.botStart.x + Math.cos(a) * 14), mz = (int) (this.botStart.z + Math.sin(a) * 14);
+					int my = this.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, mx, mz);
+					cmd("execute positioned %d %d %d run modsmac spawn minecraft:zombie %s", mx, my, mz, personas[i / 2]);
+				}
+			}
 			AiStats.reset();
 			cmd("tick sprint %d", this.scenario.ticks());
 			LOG.info("[playtest] run {}: survival at {}", this.index, this.botStart);
@@ -470,6 +488,9 @@ public class Playtest implements ModInitializer {
 			for (Mob m : this.level.getEntitiesOfClass(Mob.class, this.bot.player.getBoundingBox().inflate(64.0), Mob::isAlive)) {
 				var brain = ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain();
 				this.census.putIfAbsent(m.getUUID(), BuiltInRegistries.ENTITY_TYPE.getKey(m.getType()).getPath() + "/" + brain.personalityName());
+				if (m instanceof net.minecraft.world.entity.monster.Enemy || m instanceof net.minecraft.world.entity.npc.villager.Villager || m instanceof net.minecraft.world.entity.animal.wolf.Wolf) {
+					this.activityByPersona.computeIfAbsent(brain.personalityName(), k -> new java.util.TreeMap<>()).merge(brain.activity(), 1, Integer::sum);
+				}
 				if (brain.buildProgress() >= 0) busy++;
 			}
 			this.buildersBusyMax = Math.max(this.buildersBusyMax, busy);
@@ -637,6 +658,14 @@ public class Playtest implements ModInitializer {
 						case "imposters" -> brain.debugPersonality(pi++ < 2 ? "imposter" : "tactician");
 						case "cover" -> { brain.debugPersonality("tactician"); brain.debugForce("nosniper"); }
 						default -> {}
+					}
+				}
+				if (this.scenario.name().equals("wolves")) {
+					for (String it : new String[] {"iron_sword", "iron_chestplate", "rotten_flesh", "rotten_flesh"}) {
+						cmd("summon item %d 121 %d {Item:{id:\"minecraft:%s\",count:2},PickupDelay:10s}", this.origin.getX() + 2, this.origin.getZ() - 2, it);
+					}
+					for (Tracked t : this.tracked) {
+						t.mob.hurt(this.level.damageSources().playerAttack(this.bot.player), 1.0F);
 					}
 				}
 				if (this.scenario.name().equals("loot")) {
@@ -847,6 +876,14 @@ public class Playtest implements ModInitializer {
 				Map<String, Integer> pairs = new java.util.TreeMap<>();
 				for (String v : this.census.values()) pairs.merge(v, 1, Integer::sum);
 				sb.append("  type/personality ").append(pairs).append('\n');
+				sb.append("What each personality was doing (samples every 5 s, hostile mobs, villagers and wolves):\n");
+				for (Map.Entry<String, Map<String, Integer>> e : this.activityByPersona.entrySet()) {
+					int total = e.getValue().values().stream().mapToInt(Integer::intValue).sum();
+					StringBuilder line = new StringBuilder();
+					e.getValue().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+						.forEach(a -> line.append(String.format(Locale.ROOT, " %s %.0f%%", a.getKey(), 100.0 * a.getValue() / total)));
+					sb.append(String.format(Locale.ROOT, "  %-10s (%3d samples):%s%n", e.getKey(), total, line));
+				}
 			}
 			if (AiStats.timing || this.scenario.name().startsWith("crowd")) {
 				int n = Math.max(1, this.ticks - 20);

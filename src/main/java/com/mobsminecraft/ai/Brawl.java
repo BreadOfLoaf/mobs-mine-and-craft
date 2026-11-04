@@ -79,6 +79,10 @@ final class Brawl {
 		if (brain.isPassive() && mob.getHealth() / mob.getMaxHealth() < 0.25F) {
 			return null;
 		}
+		// Provoked by a player (a wolf, say): that fight comes first.
+		if (mob.getTarget() instanceof net.minecraft.world.entity.player.Player) {
+			return null;
+		}
 		// Whatever hurt it (if it's a monster), then a monster hurting one of its herd or village.
 		LivingEntity hurtBy = mob.getLastHurtByMob();
 		if (hurtBy instanceof Enemy && hurtBy.isAlive() && mob.tickCount - mob.getLastHurtByMobTimestamp() < 200) {

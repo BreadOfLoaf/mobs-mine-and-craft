@@ -63,8 +63,9 @@ final class Prospecting {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
-		brain.prospectCooldown = 2400 + r.nextInt(3600);
-		if (r.nextFloat() > 0.6F && !brain.forceProspect) {
+		boolean mineman = brain.personality == Personality.MINEMAN;
+		brain.prospectCooldown = mineman ? 300 + r.nextInt(600) : 2400 + r.nextInt(3600);
+		if (!mineman && r.nextFloat() > 0.6F && !brain.forceProspect) {
 			return false;
 		}
 		BlockPos start = mob.blockPosition();
@@ -103,7 +104,8 @@ final class Prospecting {
 		int recruited = 0;
 		for (Mob other : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(14.0), m -> m != mob && m.isAlive())) {
 			SmartBrain ob = brainOf(other);
-			if (recruited < 3 && ob.isPassive() && BlockWork.canBuild(other) && !busy(ob) && other.getTarget() == null) {
+			boolean sameKind = mineman ? ob.personality == Personality.MINEMAN : ob.isPassive();
+			if (recruited < 3 && sameKind && BlockWork.canBuild(other) && !busy(ob) && other.getTarget() == null) {
 				ob.prospectLeader = mob;
 				recruited++;
 			}
@@ -295,6 +297,13 @@ final class Prospecting {
 
 	private static boolean smelt(SmartBrain brain, ServerLevel level) {
 		Mob mob = brain.mob;
+		if (brain.personality == Personality.MINEMAN) {
+			// Minemen don't smelt: the ore goes in their chest (see Personalities.mineman).
+			brain.prospectCooldown = 0;
+			finish(brain, level);
+			brain.prospectCooldown = 300 + mob.getRandom().nextInt(600);
+			return false;
+		}
 		if (brain.prospectFurnace == null) {
 			// Pool the group's ore with the leader.
 			for (Mob other : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(16.0), m -> m != mob && m.isAlive())) {

@@ -25,6 +25,12 @@ public class MobsMineAndCraft implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ServerTickEvents.END_LEVEL_TICK.register(TimedCleanup::tick);
+		// More wolf packs in forests, taigas and savannas.
+		net.fabricmc.fabric.api.biome.v1.BiomeModifications.addSpawn(
+			net.fabricmc.fabric.api.biome.v1.BiomeSelectors.tag(net.minecraft.tags.BiomeTags.IS_FOREST)
+				.or(net.fabricmc.fabric.api.biome.v1.BiomeSelectors.tag(net.minecraft.tags.BiomeTags.IS_TAIGA))
+				.or(net.fabricmc.fabric.api.biome.v1.BiomeSelectors.tag(net.minecraft.tags.BiomeTags.IS_SAVANNA)),
+			net.minecraft.world.entity.MobCategory.CREATURE, net.minecraft.world.entity.EntityTypes.WOLF, 10, 2, 4);
 		// What mobs can hear: footsteps nearby, blocks being broken, fighting.
 		ServerTickEvents.END_LEVEL_TICK.register(level -> {
 			if (level.getGameTime() % 5 == 0) {

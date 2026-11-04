@@ -287,6 +287,9 @@ final class Personalities {
 			if (mob.getTarget() != victim) {
 				mob.setTarget(victim);
 			}
+			if (imposterUtility(b, level, victim)) {
+				return true;
+			}
 			// Mobs without a vanilla attack (or that won't chase this kind of target) get a hand.
 			if (!(mob instanceof net.minecraft.world.entity.monster.RangedAttackMob)) {
 				double reach = mob.getBbWidth() * 0.5 + victim.getBbWidth() * 0.5 + 1.0;
@@ -309,10 +312,68 @@ final class Personalities {
 	}
 
 	/** An imposter killed an "ally": it pockets their best gear and upgrades its own armour a step. */
+	private static final net.minecraft.resources.Identifier IMPOSTER_GROWTH = net.minecraft.resources.Identifier.fromNamespaceAndPath(
+		com.mobsminecraft.MobsMineAndCraft.MOD_ID, "imposter_growth");
+
+	/**
+	 * The imposter's tricks: pearl in on a victim that's getting away (or pearl out when badly hurt), a Slowness
+	 * potion so the victim can't run, and Swiftness for itself. Returns true if it used something this tick.
+	 */
+	private static boolean imposterUtility(SmartBrain b, ServerLevel level, LivingEntity victim) {
+		Mob mob = b.mob;
+		RandomSource r = mob.getRandom();
+		if (b.imposterUtilityCooldown > 0) {
+			return false;
+		}
+		double dist = mob.distanceTo(victim);
+		float hp = mob.getHealth() / mob.getMaxHealth();
+		// Speed for itself.
+		if (!mob.hasEffect(MobEffects.SPEED) && dist < 20.0) {
+			b.imposterUtilityCooldown = 40;
+			Eating.start(b, level, net.minecraft.world.item.alchemy.PotionContents.createItemStack(Items.POTION, net.minecraft.world.item.alchemy.Potions.SWIFTNESS),
+				Eating.EAT_TICKS, () -> mob.addEffect(new MobEffectInstance(MobEffects.SPEED, 20 * 60, 0)));
+			com.mobsminecraft.debug.AiStats.add("imposter_drink_speed");
+			return true;
+		}
+		// Slow the victim so it can't run away.
+		if (!victim.hasEffect(MobEffects.SLOWNESS) && dist > 3.0 && dist < 10.0 && mob.hasLineOfSight(victim)) {
+			b.imposterUtilityCooldown = 100 + r.nextInt(60);
+			ItemStack stack = net.minecraft.world.item.alchemy.PotionContents.createItemStack(Items.SPLASH_POTION, net.minecraft.world.item.alchemy.Potions.SLOWNESS);
+			var thrown = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplashPotion(level, mob, stack);
+			Vec3 d = victim.position().subtract(mob.position());
+			net.minecraft.world.entity.projectile.Projectile.spawnProjectileUsingShoot(thrown, level, stack, d.x, d.y + Math.sqrt(d.x * d.x + d.z * d.z) * 0.2, d.z, 0.75F, 2.0F);
+			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+			level.playSound(null, mob.blockPosition(), SoundEvents.SPLASH_POTION_THROW, SoundSource.HOSTILE, 1.0F, 0.8F);
+			com.mobsminecraft.debug.AiStats.add("imposter_slowness");
+			return true;
+		}
+		// Ender pearl: close in on a victim that's far off, or get out when badly hurt.
+		if ((dist > 12.0 && dist < 28.0 && mob.hasLineOfSight(victim)) || hp < 0.3F) {
+			b.imposterUtilityCooldown = 200 + r.nextInt(100);
+			Vec3 aim = hp < 0.3F ? mob.position().subtract(victim.position()).multiply(1.0, 0.0, 1.0).normalize().scale(12.0).add(0.0, 4.0, 0.0)
+				: victim.position().subtract(mob.position()).add(0.0, dist * 0.15, 0.0);
+			ItemStack pearl = new ItemStack(Items.ENDER_PEARL);
+			var thrown = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(level, mob, pearl);
+			net.minecraft.world.entity.projectile.Projectile.spawnProjectileUsingShoot(thrown, level, pearl, aim.x, aim.y, aim.z, 1.5F, 1.0F);
+			level.playSound(null, mob.blockPosition(), SoundEvents.ENDER_PEARL_THROW, SoundSource.HOSTILE, 0.5F, 0.4F);
+			com.mobsminecraft.debug.AiStats.add(hp < 0.3F ? "imposter_pearl_escape" : "imposter_pearl_chase");
+			return true;
+		}
+		return false;
+	}
+
 	private static void slain(SmartBrain b, ServerLevel level, LivingEntity victim) {
 		Mob mob = b.mob;
 		b.imposterKills++;
 		com.mobsminecraft.debug.AiStats.add("imposter_kill");
+		// Each kill makes it tougher: +2 max health (up to +20) and a little healing.
+		var health = mob.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+		if (health != null && b.imposterKills <= 10) {
+			health.removeModifier(IMPOSTER_GROWTH);
+			health.addPermanentModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(IMPOSTER_GROWTH, 2.0 * b.imposterKills,
+				net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE));
+		}
+		mob.heal(4.0F);
 		for (EquipmentSlot slot : EquipmentSlot.values()) {
 			ItemStack st = victim.getItemBySlot(slot);
 			if (!st.isEmpty() && st.isDamageableItem() && b.stolen.size() < 6) {
@@ -479,6 +540,10 @@ final class Personalities {
 			b.crafterTable = BlockWork.findNearest(level, mob.blockPosition(), 6, s -> s.is(Blocks.CRAFTING_TABLE));
 			if (b.crafterTable == null && griefing) {
 				b.crafterTable = b.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
+				// A little workshop: a brewing stand beside the table for its potions.
+				if (b.crafterTable != null && BlockWork.findNearest(level, b.crafterTable, 3, st -> st.is(Blocks.BREWING_STAND)) == null) {
+					b.placeAdjacent(level, Blocks.BREWING_STAND.defaultBlockState());
+				}
 			}
 		}
 		b.crafterTicks++;
@@ -596,6 +661,13 @@ final class Personalities {
 			return ItemStack.EMPTY;
 		}
 		// Nothing to upgrade: a consumable.
+		// Half the time a drinkable potion it brewed (they drink it when it's useful); otherwise a throwable or food.
+		if (r.nextBoolean()) {
+			var potions = java.util.List.of(net.minecraft.world.item.alchemy.Potions.HEALING, net.minecraft.world.item.alchemy.Potions.STRENGTH,
+				net.minecraft.world.item.alchemy.Potions.SWIFTNESS, net.minecraft.world.item.alchemy.Potions.REGENERATION,
+				net.minecraft.world.item.alchemy.Potions.FIRE_RESISTANCE);
+			return net.minecraft.world.item.alchemy.PotionContents.createItemStack(Items.POTION, potions.get(r.nextInt(potions.size())));
+		}
 		Item[] stuff = {Items.SNOWBALL, Items.ENDER_PEARL, Items.FIRE_CHARGE, Items.COOKED_BEEF, Items.WIND_CHARGE};
 		Item item = stuff[r.nextInt(stuff.length)];
 		return new ItemStack(item, Math.min(item.getDefaultMaxStackSize(), 4));

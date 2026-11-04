@@ -37,10 +37,14 @@ final class Traps {
 			return false;
 		}
 		if (brain.trapPlan == null) {
-			if (mob.tickCount < 200 || !mob.onGround() || mob.getRandom().nextInt(80) != 0
-				|| level.getNearestPlayer(mob, 48.0) == null) {
+			boolean engineer = brain.personality == Personality.ENGINEER;
+			boolean knowsPlayer = brain.knownPlayer != null && level.getGameTime() - brain.knownTick < 2400;
+			// Engineers on patrol set ambushes even without knowing where a player is.
+			boolean ambush = engineer && brain.engineerAmbush;
+			if (mob.tickCount < 200 || !mob.onGround() || (!ambush && (mob.getRandom().nextInt(engineer ? 10 : 80) != 0 || !knowsPlayer))) {
 				return false;
 			}
+			brain.engineerAmbush = false;
 			plan(brain, level);
 			if (brain.trapPlan == null) {
 				return false;
@@ -74,7 +78,7 @@ final class Traps {
 			brain.trapPlan = null;
 			com.mobsminecraft.debug.AiStats.add("tripwire_trap");
 			// Rest a minute or two, then build another one.
-			brain.trapCooldown = 1200 + mob.getRandom().nextInt(1200);
+			brain.trapCooldown = brain.personality == Personality.ENGINEER ? 400 + mob.getRandom().nextInt(400) : 1200 + mob.getRandom().nextInt(1200);
 		}
 		return true;
 	}

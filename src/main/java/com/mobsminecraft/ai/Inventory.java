@@ -45,6 +45,14 @@ public final class Inventory {
 			if (mob.canPickUpLoot() && mob.wantsToPickUp(level, stack)) {
 				continue; // villagers and piglins handle their own pickups
 			}
+			if (Wolves.isWildWolf(brain) && Wolves.equip(brain, stack)) {
+				mob.take(entity, 1);
+				stack.shrink(1);
+				if (stack.isEmpty()) {
+					entity.discard();
+				}
+				continue;
+			}
 			if (isGear(stack)) {
 				ItemStack equipped = mob.equipItemIfPossible(level, stack.copy());
 				if (!equipped.isEmpty()) {

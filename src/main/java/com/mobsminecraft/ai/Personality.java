@@ -65,6 +65,9 @@ public enum Personality {
 	}
 
 	private static Personality roll(Mob mob, RandomSource r) {
+		if (mob instanceof net.minecraft.world.entity.animal.wolf.Wolf) {
+			return TACTICIAN; // wild wolves are all tacticians
+		}
 		if (!BlockWork.canBuild(mob)) {
 			// Flyers, swimmers, slimes...: only personalities that don't need building.
 			return pick(r, new Personality[] {TACTICIAN, FIGHTER, GIFTER, IMPOSTER, HERO}, new int[] {70, 20, 4, 3, 3});
@@ -164,6 +167,7 @@ public enum Personality {
 			case MINEMAN -> {
 				noCrafting(b);
 				noBuilding(b);
+				b.prospectCooldown = 100 + r.nextInt(300);
 				b.outpostBuilder = enemy;
 				b.supporter = false;
 				b.engineer = false;

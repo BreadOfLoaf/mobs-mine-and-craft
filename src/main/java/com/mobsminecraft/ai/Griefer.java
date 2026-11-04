@@ -17,7 +17,7 @@ final class Griefer {
 	private Griefer() {}
 
 	static boolean grieves(SmartBrain b) {
-		return b.personality == Personality.GRIEFER || b.personality == Personality.IMPOSTER;
+		return b.personality == Personality.GRIEFER;
 	}
 
 	/** Runs from any lit TNT nearby (checked before anything else, even mid-mining). Returns true while fleeing. */
@@ -44,23 +44,63 @@ final class Griefer {
 		return false;
 	}
 
+	/** The mob at the centre of the biggest bunch of mobs within 16 blocks (2 or more), or null. */
+	private static LivingEntity crowd(ServerLevel level, Mob self) {
+		java.util.List<Mob> near = level.getEntitiesOfClass(Mob.class, self.getBoundingBox().inflate(16.0), m -> m != self && m.isAlive() && m.distanceTo(self) > 5.0F);
+		Mob best = null;
+		int bestCount = 0;
+		for (Mob m : near) {
+			int count = 0;
+			for (Mob o : near) {
+				if (o.distanceToSqr(m) < 16.0) count++;
+			}
+			if (count > bestCount) {
+				bestCount = count;
+				best = m;
+			}
+		}
+		return best;
+	}
+
+	/** Throws a lit TNT in an arc to land around the target. */
+	private static void throwTnt(ServerLevel level, Mob mob, LivingEntity at) {
+		net.minecraft.world.entity.item.PrimedTnt tnt = new net.minecraft.world.entity.item.PrimedTnt(level, mob.getX(), mob.getEyeY(), mob.getZ(), mob);
+		Vec3 d = at.position().subtract(tnt.position());
+		double horiz = Math.sqrt(d.x * d.x + d.z * d.z);
+		// Roughly a 1-second flight.
+		tnt.setDeltaMovement(d.x / 22.0, Math.max(0.25, d.y / 22.0 + horiz * 0.022 + 0.2), d.z / 22.0);
+		tnt.setFuse(50);
+		level.addFreshEntity(tnt);
+		mob.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT);
+		level.playSound(null, mob.blockPosition(), net.minecraft.sounds.SoundEvents.TNT_PRIMED, net.minecraft.sounds.SoundSource.HOSTILE, 1.0F, 1.0F);
+	}
+
 	/** Returns true if it started something this tick. */
 	static boolean tick(SmartBrain b, ServerLevel level, LivingEntity target) {
 		Mob mob = b.mob;
 		RandomSource r = mob.getRandom();
-		if (b.griefTntCooldown <= 0 && mob.onGround()) {
-			b.griefTntCooldown = 300 + r.nextInt(400);
-			// Drop a lit TNT right where it stands (near the player if it's close), then run for it.
-			BlockPos p = mob.blockPosition();
-			if (level.getBlockState(p).canBeReplaced() && BlockWork.isFloor(level, p.below())) {
-				level.setBlock(p, Blocks.TNT.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
-				if (net.minecraft.world.level.block.TntBlock.prime(level, p, mob, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.FLINT_AND_STEEL))) {
-					level.setBlock(p, Blocks.AIR.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL_IMMEDIATE);
-					level.playSound(null, p, net.minecraft.sounds.SoundEvents.FLINTANDSTEEL_USE, net.minecraft.sounds.SoundSource.HOSTILE, 1.0F, 1.0F);
-				}
-				b.griefFleeFrom = Vec3.atCenterOf(p);
-				b.awayGoal = null;
-				com.mobsminecraft.debug.AiStats.add("griefer_tnt");
+		// Lobs lit TNT, at a crowd of mobs if there is one (it doesn't care whose side they're on), else at the player.
+		if (b.griefTntCooldown <= 0) {
+			b.griefTntCooldown = 60 + r.nextInt(60);
+			LivingEntity aim = crowd(level, mob);
+			if (aim == null && target != null && mob.distanceTo(target) < 16.0F) {
+				aim = target;
+			}
+			if (aim != null && mob.hasLineOfSight(aim)) {
+				throwTnt(level, mob, aim);
+				com.mobsminecraft.debug.AiStats.add(aim instanceof net.minecraft.world.entity.player.Player ? "griefer_tnt_player" : "griefer_tnt_mobs");
+				return true;
+			}
+		}
+		// Sets mobs on fire with flint and steel.
+		if (b.griefFireCooldown <= 0) {
+			b.griefFireCooldown = 60 + r.nextInt(80);
+			for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(5.0), m -> m != mob && m.isAlive() && !m.fireImmune() && !m.isOnFire())) {
+				// Sets the mob itself alight (not the ground, so the fire doesn't spread back to the griefer).
+				m.igniteForSeconds(6.0F);
+				mob.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT);
+				level.playSound(null, m.blockPosition(), net.minecraft.sounds.SoundEvents.FLINTANDSTEEL_USE, net.minecraft.sounds.SoundSource.HOSTILE, 1.0F, 1.0F);
+				com.mobsminecraft.debug.AiStats.add("griefer_burn");
 				return true;
 			}
 		}
@@ -77,8 +117,8 @@ final class Griefer {
 		BlockPos here = mob.blockPosition();
 		BlockPos natural = null;
 		for (int i = 0; i < 24; i++) {
-			BlockPos p = here.offset(r.nextInt(9) - 4, r.nextInt(4) - 1, r.nextInt(9) - 4);
-			if (p.equals(here.below())) continue;
+			// At or above its own feet only, so it never digs itself into a pit.
+			BlockPos p = here.offset(r.nextInt(9) - 4, r.nextInt(3), r.nextInt(9) - 4);
 			BlockState s = level.getBlockState(p);
 			if (s.isAir() || !BlockWork.canMine(mob, level, p, s) || !BlockWork.isExposed(level, p)) continue;
 			if (!BlockWork.isNatural(level, p, s)) {

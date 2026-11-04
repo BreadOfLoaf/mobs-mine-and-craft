@@ -278,6 +278,12 @@ public final class SmartBrain {
 	final java.util.Map<java.util.UUID, Integer> crafterGiven = new java.util.HashMap<>();
 	int crafterMade;
 	int craftDisengage;
+	Vec3 stuckCheckPos;
+	int stuckIdleTicks;
+	Mob escortOf;
+	Vec3 siteGoal;
+	boolean engineerAmbush;
+	int siteTicks;
 	int idleCraftCooldown;
 	ItemStack crafterItem;
 	BlockPos crafterTable;
@@ -286,6 +292,7 @@ public final class SmartBrain {
 	int stashTicks;
 	LivingEntity imposterVictim;
 	int imposterKills;
+	int imposterUtilityCooldown;
 	final List<ItemStack> stolen = new ArrayList<>();
 	int imposterCooldown;
 	Vec3 awayGoal;
@@ -301,6 +308,7 @@ public final class SmartBrain {
 	int griefCooldown;
 	int griefTntCooldown;
 	Vec3 griefFleeFrom;
+	int griefFireCooldown;
 	int griefFleeTicks;
 	int cleanupCooldown;
 	BlockPos cleanupTarget;
@@ -577,6 +585,32 @@ public final class SmartBrain {
 
 	boolean eating() {
 		return this.eatFood != null;
+	}
+
+	/** What the mob is busy with right now, in a word (for playtest reports). */
+	public String activity() {
+		if (this.eating()) return "eating";
+		if (this.prospectPhase != Prospecting.NONE || this.prospectLeader != null) return "prospecting";
+		if (this.stashPos != null) return "stashing";
+		if (this.miningPos != null) return "mining";
+		if (this.digTarget != null) return "going_to_dig";
+		if (this.housePlan != null) return "building";
+		if (this.rsPlan != null || this.trapPlan != null) return "building_trap";
+		if (this.rsButton != null) return "operating_trap";
+		if (this.crafting != null || this.crafterTicks > 0 || this.crafterItem != null || this.craftDisengage > 0) return "crafting";
+		if (this.farmPlan != null) return "farming";
+		if (this.cookPos != null) return "cooking";
+		if (this.recovering || this.fleeTicks > 0) return "retreating";
+		if (this.towerRemaining > 0 || this.digRemaining > 0 || this.stairTicks > 0 || this.tunnelTicks > 0 || this.climbTicks > 0) return "climbing_digging";
+		if (this.lootItem != null) return "looting";
+		if (this.griefFleeFrom != null) return "fleeing_tnt";
+		if (this.personality == Personality.ENGINEER && this.knownPlayer != null && this.mob.level().getGameTime() - this.knownTick < 200) return "stalking";
+		if (this.imposterVictim != null) return "betraying";
+		if (this.mob.getTarget() != null) return "fighting";
+		if (this.knownPos != null && this.investigateTicks > 0) return "investigating";
+		if (this.knightOf != null) return "guarding";
+		if (this.sniperPhase == 3) return "sniping";
+		return this.mob.getNavigation().isDone() ? "idle" : "wandering";
 	}
 
 	/** The mob's personality (for reports). */
@@ -910,6 +944,13 @@ public final class SmartBrain {
 		if (this.investigate(level)) {
 			return;
 		}
+		if (Wolves.isWildWolf(this) && Wolves.heal(this, level)) {
+			return;
+		}
+		// Each personality's own work when there's no fight on.
+		if (canBuild && Roles.idle(this, level)) {
+			return;
+		}
 		if (Knights.stayClose(this, false)) {
 			return;
 		}
@@ -919,7 +960,7 @@ public final class SmartBrain {
 			return;
 		}
 		Recovery.snack(this, level);
-		if (this.isPassive() && Prospecting.tick(this, level, griefing)) {
+		if ((this.isPassive() || this.personality == Personality.MINEMAN) && Prospecting.tick(this, level, griefing)) {
 			return;
 		}
 		if (this.tickCastleGuard()) {
@@ -988,9 +1029,11 @@ public final class SmartBrain {
 		if (this.crafterCooldown > 0 && this.crafterCooldown != Integer.MAX_VALUE) this.crafterCooldown--;
 		if (this.idleCraftCooldown > 0) this.idleCraftCooldown--;
 		if (this.imposterCooldown > 0) this.imposterCooldown--;
+		if (this.imposterUtilityCooldown > 0) this.imposterUtilityCooldown--;
 		if (this.giftCooldown > 0) this.giftCooldown--;
 		if (this.griefCooldown > 0) this.griefCooldown--;
 		if (this.griefTntCooldown > 0) this.griefTntCooldown--;
+		if (this.griefFireCooldown > 0) this.griefFireCooldown--;
 		if (this.cleanupCooldown > 0) this.cleanupCooldown--;
 		if (this.rsCooldown > 0) this.rsCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
@@ -1307,7 +1350,8 @@ public final class SmartBrain {
 		this.coverCooldown = 60;
 		double dist = this.mob.distanceTo(target);
 		boolean ranged = isRangedWeapon(target.getMainHandItem()) || isRangedWeapon(target.getOffhandItem());
-		boolean passive = !(this.mob instanceof Enemy);
+		// Passive mobs wall themselves off from a player; neutral ones like wolves fight instead.
+		boolean passive = !(this.mob instanceof Enemy) && !(this.mob instanceof NeutralMob);
 		boolean wants = ranged ? dist > 10 && dist < 32 : passive && dist > 4 && dist < 12;
 		RandomSource r = this.mob.getRandom();
 		if (!wants || !this.mob.hasLineOfSight(target) || r.nextFloat() > 0.35F) {
@@ -1804,7 +1848,7 @@ public final class SmartBrain {
 				this.castleCenter = this.houseCenter;
 			} else if (this.isPassive() || this.personality == Personality.BUILDER || this.personality == Personality.GRIEFER) {
 				// Builders (and griefers) keep at it: another build after a break.
-				this.houseCooldown = (this.personality == Personality.BUILDER ? 2400 : 6000) + this.mob.getRandom().nextInt(4000);
+				this.houseCooldown = (this.personality == Personality.BUILDER ? 900 : 6000) + this.mob.getRandom().nextInt(this.personality == Personality.BUILDER ? 1200 : 4000);
 			} else {
 				this.houseBuilt = true;
 			}
@@ -1877,14 +1921,13 @@ public final class SmartBrain {
 	}
 
 	/** Surface houses above ground; underground, an outpost, cave house or mineshaft instead. */
-	private void planHouse(ServerLevel level) {
+	void planHouse(ServerLevel level) {
 		RandomSource r = this.mob.getRandom();
 		if (Outpost.isUnderground(level, this.mob)) {
 			Underground.plan(this, level);
 		} else if (this.personality == Personality.GRIEFER) {
 			Houses.plan(this, level, Houses.DIRT_HUT, false);
-		} else if (this.personality == Personality.BUILDER && r.nextFloat() < 0.08F) {
-			Castle.plan(this, level);
+
 		} else {
 			Houses.plan(this, level, Houses.forBiome(level, this.mob.blockPosition(), r), false);
 		}
@@ -2015,8 +2058,8 @@ public final class SmartBrain {
 		}
 		this.digBuildBudget = 6;
 		this.digTarget = pos;
+		this.digTimeout = 160;
 		this.digTargetDrops = drops;
-		this.digTimeout = 300;
 		this.digAny = false;
 	}
 

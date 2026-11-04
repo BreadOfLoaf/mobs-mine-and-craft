@@ -194,6 +194,11 @@ final class Houses {
 			hz = t;
 		}
 		int wallH = cave ? 3 + r.nextInt(2) : 3 + r.nextInt(3);
+		// Some houses get a second storey: taller walls with a floor and ladder inside.
+		boolean twoStorey = !cave && hx >= 3 && hz >= 3 && r.nextFloat() < 0.3F;
+		if (twoStorey) {
+			wallH = 7;
+		}
 		Roof roof = cave || p.stairs() == null ? Roof.FLAT : switch (r.nextInt(20)) {
 			case 0, 1, 2, 3 -> Roof.FLAT;
 			case 4, 5, 6, 7, 8, 9, 10, 11 -> Roof.GABLE;
@@ -279,7 +284,7 @@ final class Houses {
 						continue;
 					}
 					BlockState s = corner ? p.corner().defaultBlockState() : p.wall().defaultBlockState();
-					boolean windowRow = y == 1 || (y == 2 && wallH >= 5);
+					boolean windowRow = twoStorey ? y == 1 || y == 5 : y == 1 || (y == 2 && wallH >= 5);
 					if (window != null && !corner && windowRow && isWindowSpot(x, z, hx, hz, doorX, doorZ)) {
 						s = window.defaultBlockState();
 					}
@@ -310,7 +315,11 @@ final class Houses {
 		plan.addAll(roofPlan);
 		states.addAll(roofStates);
 
-		furnish(c, hx, hz, doorX, doorZ, doorSide, r, plan, states, p, wallH);
+		furnish(c, hx, hz, doorX, doorZ, doorSide, r, plan, states, p, twoStorey ? 3 : wallH);
+		if (twoStorey) {
+			upperFloor(c, hx, hz, doorX, doorZ, r, plan, states, p);
+		}
+		extras(c, hx, hz, wallH, doorX, doorZ, doorSide, r, plan, states, p, cave);
 
 		// Outside: a dirt path from the door and some flowers.
 		BlockPos doorPos = c.offset(doorX, 0, doorZ);
@@ -336,6 +345,101 @@ final class Houses {
 		brain.houseCenter = c;
 		brain.buildInterval = 2;
 		return true;
+	}
+
+	/** The second storey: a plank floor at height 3 with a ladder up through a hole in one corner, and a bed upstairs. */
+	private static void upperFloor(BlockPos c, int hx, int hz, int doorX, int doorZ, RandomSource r, List<BlockPos> plan, List<BlockState> states, Palette p) {
+		int lx = hx - 1;
+		int lz = hz - 1;
+		if (lx == doorX && lz == doorZ) lz = -lz;
+		Block floor = p.floor() != null ? p.floor() : Blocks.OAK_PLANKS;
+		for (int x = -hx + 1; x < hx; x++) {
+			for (int z = -hz + 1; z < hz; z++) {
+				if (x == lx && z == lz) continue;
+				plan.add(c.offset(x, 3, z));
+				states.add(floor.defaultBlockState());
+			}
+		}
+		// The ladder hugs the wall on the +x side.
+		for (int y = 0; y <= 3; y++) {
+			plan.add(c.offset(lx, y, lz));
+			states.add(Blocks.LADDER.defaultBlockState().setValue(net.minecraft.world.level.block.LadderBlock.FACING, Direction.WEST));
+		}
+		// Upstairs: a bed and a lantern.
+		plan.add(c.offset(-hx + 1, 4, -hz + 1));
+		states.add(Blocks.BED.pick(DyeColor.values()[r.nextInt(DyeColor.values().length)]).defaultBlockState()
+			.setValue(HorizontalDirectionalBlock.FACING, Direction.SOUTH));
+		plan.add(c.offset(-hx + 1, 4, hz - 1));
+		states.add(Blocks.LANTERN.defaultBlockState());
+	}
+
+	/** Optional extras outside: a porch over the door, a fenced garden, a corner lookout post. */
+	private static void extras(BlockPos c, int hx, int hz, int wallH, int doorX, int doorZ, Direction doorSide, RandomSource r,
+		List<BlockPos> plan, List<BlockState> states, Palette p, boolean cave) {
+		if (cave) {
+			return;
+		}
+		Block fence = Blocks.OAK_FENCE;
+		Block slab = Blocks.OAK_SLAB;
+		BlockPos door = c.offset(doorX, 0, doorZ);
+		Direction along = doorSide.getClockWise();
+		if (r.nextFloat() < 0.35F) {
+			// Porch: two fence posts out front holding up a slab roof over the doorstep.
+			for (int s = -1; s <= 1; s += 2) {
+				BlockPos post = door.relative(doorSide, 2).relative(along, s);
+				plan.add(post);
+				states.add(fence.defaultBlockState());
+				plan.add(post.above());
+				states.add(fence.defaultBlockState());
+			}
+			for (int f = 1; f <= 2; f++) {
+				for (int s = -1; s <= 1; s++) {
+					plan.add(door.relative(doorSide, f).relative(along, s).above(2));
+					states.add(slab.defaultBlockState());
+				}
+			}
+			com.mobsminecraft.debug.AiStats.add("house_porch");
+		}
+		if (r.nextFloat() < 0.3F) {
+			// Fenced garden on the side away from the door, with berry bushes, pumpkins and flowers.
+			Direction back = doorSide.getOpposite();
+			int depth = 3;
+			int baseOut = (back.getAxis() == Direction.Axis.X ? hx : hz) + 1;
+			int half = (back.getAxis() == Direction.Axis.X ? hz : hx);
+			Direction across = back.getClockWise();
+			BlockPos edge = c.relative(back, baseOut);
+			for (int d = 0; d <= depth; d++) {
+				for (int w = -half; w <= half; w++) {
+					BlockPos q = edge.relative(back, d).relative(across, w);
+					boolean rim = d == depth || Math.abs(w) == half;
+					if (rim) {
+						plan.add(q);
+						states.add(fence.defaultBlockState());
+					} else if (r.nextFloat() < 0.6F) {
+						plan.add(q);
+						Block plant = switch (r.nextInt(4)) {
+							case 0 -> Blocks.SWEET_BERRY_BUSH;
+							case 1 -> Blocks.PUMPKIN;
+							case 2 -> Blocks.POPPY;
+							default -> Blocks.CORNFLOWER;
+						};
+						states.add(plant.defaultBlockState());
+					}
+				}
+			}
+			com.mobsminecraft.debug.AiStats.add("house_garden");
+		}
+		if (r.nextFloat() < 0.2F) {
+			// Lookout post on a corner: a log column above the roof line with a fence ring and a lantern.
+			BlockPos corner = c.offset(hx, 0, hz);
+			for (int y = wallH; y <= wallH + 3; y++) {
+				plan.add(corner.above(y));
+				states.add(p.corner().defaultBlockState());
+			}
+			plan.add(corner.above(wallH + 4));
+			states.add(Blocks.LANTERN.defaultBlockState());
+			com.mobsminecraft.debug.AiStats.add("house_lookout");
+		}
 	}
 
 	private static boolean isWindowSpot(int x, int z, int hx, int hz, int doorX, int doorZ) {

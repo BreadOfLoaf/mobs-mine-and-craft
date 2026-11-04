@@ -87,7 +87,6 @@ final class Castle {
 				states.add(isPerimeter(x, z, radius) ? Blocks.COBBLESTONE.defaultBlockState() : ((x + z) & 1) == 0 ? floorA : floorB);
 			}
 		}
-		BlockPos backCenter = c.relative(back, radius);
 		// Walls, laid course by course so the castle visibly rises. Gold is set into the back wall behind the throne.
 		for (int y = 0; y < wallHeight; y++) {
 			for (int x = -radius; x <= radius; x++) {
@@ -101,8 +100,7 @@ final class Castle {
 						continue;
 					}
 					plan.add(p);
-					boolean backrest = p.getX() == backCenter.getX() && p.getZ() == backCenter.getZ() && (y == 1 || y == 2);
-					states.add(backrest ? Blocks.GOLD_BLOCK.defaultBlockState() : wall);
+					states.add(wall);
 				}
 			}
 		}
@@ -125,18 +123,32 @@ final class Castle {
 				states.add(Blocks.TORCH.defaultBlockState());
 			}
 		}
-		// The throne against the back wall: a stone seat between two gold armrests, lanterns on top.
-		BlockPos seat = c.relative(back, radius - 1);
-		plan.add(seat);
+		// The throne: a freestanding seat on a raised dais in front of the back wall. A step up at the front,
+		// a stone seat with gold armrests, a two-high gold backrest behind it, lanterns on the armrests.
+		BlockPos seat = c.relative(back, Math.max(1, radius - 2));
+		BlockState dais = Blocks.POLISHED_ANDESITE.defaultBlockState();
+		for (int d = 0; d <= 1; d++) {
+			for (int w = -1; w <= 1; w++) {
+				plan.add(seat.relative(back, d).relative(side, w));
+				states.add(dais);
+			}
+		}
+		plan.add(seat.relative(gate));
+		states.add(Blocks.POLISHED_ANDESITE_STAIRS.defaultBlockState().setValue(StairBlock.FACING, back));
+		plan.add(seat.above());
 		states.add(Blocks.STONE_BRICK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, back));
 		for (Direction d : new Direction[] {side, side.getOpposite()}) {
-			plan.add(seat.relative(d));
-			states.add(Blocks.GOLD_BLOCK.defaultBlockState());
 			plan.add(seat.relative(d).above());
+			states.add(Blocks.GOLD_BLOCK.defaultBlockState());
+			plan.add(seat.relative(d).above(2));
 			states.add(Blocks.LANTERN.defaultBlockState());
 		}
-		// Red carpet from the gate up to the throne.
-		for (int k = radius - 1; k >= -(radius - 2); k--) {
+		plan.add(seat.relative(back).above());
+		states.add(Blocks.GOLD_BLOCK.defaultBlockState());
+		plan.add(seat.relative(back).above(2));
+		states.add(Blocks.GOLD_BLOCK.defaultBlockState());
+		// Red carpet from the gate up to the step.
+		for (int k = radius - 1; k >= -(Math.max(1, radius - 2)) + 2; k--) {
 			plan.add(c.relative(gate, k));
 			states.add(Blocks.CARPET.pick(DyeColor.RED).defaultBlockState());
 		}

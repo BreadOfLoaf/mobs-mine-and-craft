@@ -128,6 +128,9 @@ public enum Consumable {
 			give(brain, ENDER_PEARL, r);
 		}
 		// Golden apples are real: eaten ones are gone, and any left over drop when the mob dies.
+		if (mob instanceof net.minecraft.world.entity.animal.wolf.Wolf && r.nextFloat() < 0.3F) {
+			addCarried(brain, GOLDEN_APPLE, 1, null);
+		}
 		float apple = r.nextFloat();
 		if (apple < 0.02F) {
 			addCarried(brain, ENCHANTED_GOLDEN_APPLE, 1, null);
