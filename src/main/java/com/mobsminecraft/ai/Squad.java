@@ -343,6 +343,9 @@ public final class Squad {
 		double dist = mob.distanceTo(p);
 		// Being hit, or the player right on top of us: fight now, whatever the plan was.
 		if (dist < 4.0 || mob.getLastHurtByMob() == p && mob.tickCount - mob.getLastHurtByMobTimestamp() < 60) return false;
+		// Player up a pillar, down a hole or otherwise out of reach: each mob's own climbing, building and crafting
+		// tricks (ladders, stairs, towers, bridges) do the job, not formation.
+		if (Math.abs(p.getY() - mob.getY()) > 2.5 || !b.targetReachable && this.phase == Phase.ATTACK) return false;
 		Vec3 player = this.knownPos();
 		switch (this.phase) {
 			case GATHER, REGROUP -> {

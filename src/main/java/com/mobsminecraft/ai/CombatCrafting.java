@@ -23,7 +23,7 @@ import net.minecraft.world.phys.Vec3;
  * ladders to climb the player's walls, lava or water buckets, or anvils to drop on the player.
  */
 final class CombatCrafting {
-	enum Craft { LADDERS, LAVA_BUCKET, WATER_BUCKET, ANVILS, GEAR, ENCHANT }
+	enum Craft { LADDERS, STAIRS, LAVA_BUCKET, WATER_BUCKET, ANVILS, GEAR, ENCHANT }
 
 	private static final int CRAFT_TICKS = 40;
 
@@ -56,16 +56,23 @@ final class CombatCrafting {
 			if (dist > 28.0) {
 				return false;
 			}
-			brain.combatCraftCooldown = 180 + r.nextInt(300);
+			brain.combatCraftCooldown = 80 + r.nextInt(120);
 			boolean playerAbove = target.getY() - mob.getY() > 2.5;
-			if (playerAbove && brain.ladders == 0) {
-				brain.crafting = Craft.LADDERS;
+			// Gear to match what the player is wearing and wielding (iron for iron, diamond for diamond).
+			int armorGoal = Gear.armorGoal(target);
+			int weaponGoal = Gear.weaponGoal(target);
+			boolean outclassed = Gear.hasUpgradeTo(mob, armorGoal, weaponGoal);
+			if (playerAbove && brain.ladders == 0 && brain.stairTicks <= 0) {
+				// Up a pillar or a wall: ladders or a staircase.
+				brain.crafting = r.nextBoolean() ? Craft.LADDERS : Craft.STAIRS;
+			} else if (outclassed && r.nextFloat() < 0.85F) {
+				brain.crafting = Craft.GEAR;
 			} else if (brain.enchanter && !brain.gearEnchanted && Gear.hasEnchantable(mob) && r.nextFloat() < 0.5F) {
 				brain.crafting = Craft.ENCHANT;
-			} else if (Gear.hasUpgrade(mob) && r.nextFloat() < 0.65F) {
-				// Powering up: each session upgrades one piece of armour or the weapon.
+			} else if (outclassed) {
 				brain.crafting = Craft.GEAR;
 			} else {
+				// Already as well kitted as the player: make something else useful instead.
 				int roll = r.nextInt(100);
 				// Anvils are rare now, lava buckets rarer still.
 				brain.crafting = roll < 8 ? Craft.ANVILS : roll < 9 ? Craft.LAVA_BUCKET : roll < 40 ? Craft.WATER_BUCKET : Craft.LADDERS;
@@ -110,11 +117,19 @@ final class CombatCrafting {
 		if (brain.craftTicks >= (brain.crafting == Craft.ENCHANT ? 60 : CRAFT_TICKS)) {
 			switch (brain.crafting) {
 				case LADDERS -> brain.ladders += 16;
+				case STAIRS -> {
+					// Stairs to climb up to the player: the next climb is a staircase, starting now.
+					brain.stairsReady = true;
+					brain.stairCooldown = 0;
+				}
 				case LAVA_BUCKET -> Consumable.addCarried(brain, Consumable.LAVA_BUCKET, 1, null);
 				case WATER_BUCKET -> Consumable.addCarried(brain, Consumable.WATER_BUCKET, 2, null);
 				case ANVILS -> brain.anvils += 3;
 				case GEAR -> {
-					net.minecraft.world.item.ItemStack made = Gear.upgrade(brain, mob.getRandom());
+					// Never better than what the player has (well, chainmail at least).
+					// (Crafting at home, with no fight on, just goes up a step as before.)
+					net.minecraft.world.item.ItemStack made = target == null ? Gear.upgrade(brain, mob.getRandom())
+						: Gear.upgradeTo(brain, mob.getRandom(), Gear.armorGoal(target), Gear.weaponGoal(target));
 					if (made != null) {
 						level.playSound(null, mob.blockPosition(), SoundEvents.ARMOR_EQUIP_IRON.value(), SoundSource.HOSTILE, 1.0F, 1.0F);
 						com.mobsminecraft.debug.AiStats.add("gear:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(made.getItem()).getPath());
@@ -164,7 +179,9 @@ final class CombatCrafting {
 		if (brain.crafting != null) {
 			return tick(brain, level, null, griefing);
 		}
-		if (!brain.combatCrafter || !griefing || brain.idleCraftCooldown > 0 || !mob.onGround() || !Gear.hasUpgradeBelow(mob, 3)) {
+		// Builders only craft in a fight; at home they build.
+		if (!brain.combatCrafter || brain.personality == Personality.BUILDER || !griefing || brain.idleCraftCooldown > 0 || !mob.onGround()
+			|| !Gear.hasUpgradeBelow(mob, 3)) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();

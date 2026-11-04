@@ -76,7 +76,7 @@ final class UnderFire {
 			return takeCover(b, level, from);
 		}
 		boolean melee = (p == Personality.FIGHTER || p == Personality.TACTICIAN || p == Personality.HERO) && !(mob instanceof RangedAttackMob);
-		if (melee && aiming != null && target == aiming && dist < 32.0) {
+		if (melee && aiming != null && target == aiming && dist < 32.0 && b.targetReachable && Math.abs(aiming.getY() - mob.getY()) < 2.5) {
 			return zigzag(b, aiming);
 		}
 		return false;

@@ -228,6 +228,11 @@ public class Playtest implements ModInitializer {
 		}
 		add(new Scenario("real_day", 12000, "An ordinary world from mid-morning into the night, natural spawns only, the player bot playing survival.",
 			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		for (String tier : new String[] {"iron", "diamond"}) {
+			add(new Scenario("fight_craft_" + tier, 2400, "Tacticians and builders vs the player bot in full " + tier
+				+ ": do they craft gear to match, ladders and stairs, and build to their advantage?", (run, o) -> {},
+				mobs("zombie", 6, "skeleton", 2), 16, Behaviour.FIGHT));
+		}
 		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
 			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
@@ -479,6 +484,14 @@ public class Playtest implements ModInitializer {
 			}
 			if (this.scenario.bot() == Behaviour.FIGHT) {
 				PlayerBrain.giveKit(this.bot);
+				if (this.scenario.name().endsWith("_diamond")) {
+					var pl = this.bot.player;
+					pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
+					pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.DIAMOND_CHESTPLATE));
+					pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.DIAMOND_LEGGINGS));
+					pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.DIAMOND_BOOTS));
+					pl.getInventory().setItem(0, new ItemStack(Items.DIAMOND_SWORD));
+				}
 				this.brain = new PlayerBrain(this.bot, this.level, PlayerBrain.Mode.ARENA, this.botStart);
 			}
 
@@ -729,6 +742,7 @@ public class Playtest implements ModInitializer {
 						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
 						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
 						case String n when n.startsWith("vs_") -> brain.debugPersonality(n.substring(3));
+						case "fight_craft_iron", "fight_craft_diamond" -> brain.debugPersonality(t.type.equals("zombie") && pi++ % 3 == 2 ? "builder" : "tactician");
 						case "squad_on", "squad_off" -> brain.debugPersonality(t.type.equals("zombie")
 							? new String[] {"tactician", "tactician", "fighter", "fighter", "hero", "crafter", "builder", "engineer"}[pi++ % 8] : "tactician");
 						case "roles_near" -> brain.debugPersonality(t.type.equals("skeleton") ? "tactician"

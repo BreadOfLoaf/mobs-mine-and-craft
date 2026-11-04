@@ -240,6 +240,8 @@ public final class SmartBrain {
 	Direction stairDir;
 	BlockPos stairNext;
 	boolean preferStairs;
+	/** Crafted stairs in a fight: the next climb toward the player is a staircase. */
+	boolean stairsReady;
 
 	// Enchanting gear at a table mid-fight (see CombatCrafting, Gear)
 	boolean enchanter;
@@ -587,7 +589,7 @@ public final class SmartBrain {
 		if (p.peaceful() || p == Personality.ENGINEER || p == Personality.GRIEFER) {
 			return true;
 		}
-		if (p.busyWithRole()) {
+		if (this.busyWithRole()) {
 			// Builders and crafters only fight back.
 			return !(this.mob.getLastHurtByMob() == target && this.mob.tickCount - this.mob.getLastHurtByMobTimestamp() < 200);
 		}
@@ -597,7 +599,7 @@ public final class SmartBrain {
 	/** No target, but it knows roughly where a player was: go and look, then look around, then give up. */
 	private boolean investigate(ServerLevel level) {
 		if (!(this.mob instanceof Enemy) || this.knownPos == null || !this.personality.usesTricks() && this.personality != Personality.FIGHTER
-			|| this.personality.peaceful() || this.personality.busyWithRole() || level.getGameTime() - this.knownTick > 400) {
+			|| this.personality.peaceful() || this.busyWithRole() || level.getGameTime() - this.knownTick > 400) {
 			this.investigateTicks = 0;
 			return false;
 		}
@@ -634,6 +636,15 @@ public final class SmartBrain {
 	}
 
 	/** What the mob is busy with right now, in a word (for playtest reports). */
+	/**
+	 * Mobs that get on with their job and only fight a player who attacks them: crafters always, builders while
+	 * they have a house going (otherwise a builder fights, building and crafting its way to the player).
+	 */
+	boolean busyWithRole() {
+		return this.personality == Personality.CRAFTER
+			|| this.personality == Personality.BUILDER && (this.housePlan != null || this.helpingWith != null);
+	}
+
 	public boolean isInitialized() {
 		return this.initialized;
 	}
@@ -1158,7 +1169,7 @@ public final class SmartBrain {
 			Player p = this.knownPlayer;
 			return p != null && p.isAlive() && level.getGameTime() - this.knownTick < 200 && p.distanceTo(this.mob) < 28.0F ? p : null;
 		}
-		if (this.initialized && this.personality.busyWithRole()) {
+		if (this.initialized && this.busyWithRole()) {
 			LivingEntity attacker = this.mob.getLastHurtByMob();
 			return isValidTarget(attacker) && this.mob.tickCount - this.mob.getLastHurtByMobTimestamp() < 200 ? attacker : null;
 		}
@@ -1261,7 +1272,7 @@ public final class SmartBrain {
 		double dy = target.getY() - this.mob.getY();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 
-		if (!this.preferStairs && CombatCrafting.tryLadders(this, level, dx, dy, dz, horiz)) {
+		if (!this.preferStairs && !this.stairsReady && CombatCrafting.tryLadders(this, level, dx, dy, dz, horiz)) {
 			return;
 		}
 		// Carrying ladders and the player is up a wall or pillar nearby: walk right up to it to ladder it.
@@ -1269,7 +1280,8 @@ public final class SmartBrain {
 			return;
 		}
 		// A player towering up: build a staircase up to them (or tower up beside them).
-		if (dy > 2.5 && horiz < 6.0 && (this.preferStairs || this.mob.getRandom().nextFloat() < 0.6F) && Stairs.tryStart(this, level, target, dy)) {
+		if (dy > 2.5 && horiz < 8.0 && (this.preferStairs || this.stairsReady || this.mob.getRandom().nextFloat() < 0.6F) && Stairs.tryStart(this, level, target, dy)) {
+			this.stairsReady = false;
 			return;
 		}
 		if (dy > 1.5 && horiz < 2.5) {

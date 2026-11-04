@@ -57,6 +57,78 @@ final class Gear {
 		return 1;
 	}
 
+	/** The armour tier worth crafting against this player: what they wear (their best piece), at least chainmail, at most diamond. */
+	static int armorGoal(net.minecraft.world.entity.LivingEntity player) {
+		int best = 0;
+		for (EquipmentSlot slot : ARMOR) {
+			best = Math.max(best, armorTier(player.getItemBySlot(slot)));
+		}
+		return Math.max(2, Math.min(MAX_ARMOR, best));
+	}
+
+	/** The weapon tier worth crafting against this player: what they're holding, at least stone, at most diamond. */
+	static int weaponGoal(net.minecraft.world.entity.LivingEntity player) {
+		return Math.max(1, Math.min(MAX_WEAPON, weaponTier(player.getMainHandItem())));
+	}
+
+	/** True if the mob's gear falls short of these tiers somewhere. */
+	static boolean hasUpgradeTo(Mob mob, int armor, int weapon) {
+		if (!Juggernaut.canWearArmor(mob)) {
+			return false;
+		}
+		for (EquipmentSlot slot : ARMOR) {
+			if (armorTier(mob.getItemBySlot(slot)) < armor) {
+				return true;
+			}
+		}
+		return canWeapon(mob) && weaponTier(mob.getMainHandItem()) < weapon;
+	}
+
+	/**
+	 * Crafts straight up to the given tiers: the weapon first if it's behind, otherwise the weakest armour piece
+	 * below the goal becomes that tier (iron for an iron-clad player, diamond for a diamond one). Null if nothing's behind.
+	 */
+	static ItemStack upgradeTo(SmartBrain brain, RandomSource r, int armor, int weapon) {
+		Mob mob = brain.mob;
+		if (!Juggernaut.canWearArmor(mob)) {
+			return null;
+		}
+		int wt = weaponTier(mob.getMainHandItem());
+		if (canWeapon(mob) && wt < weapon && (wt == 0 || r.nextFloat() < 0.35F)) {
+			boolean axe = r.nextFloat() < 0.3F;
+			Item item = switch (weapon) {
+				case 1 -> axe ? Items.STONE_AXE : Items.STONE_SWORD;
+				case 2 -> axe ? Items.IRON_AXE : Items.IRON_SWORD;
+				default -> axe ? Items.DIAMOND_AXE : Items.DIAMOND_SWORD;
+			};
+			brain.restoreHand();
+			ItemStack stack = new ItemStack(item);
+			mob.setItemSlot(EquipmentSlot.MAINHAND, stack);
+			mob.setDropChance(EquipmentSlot.MAINHAND, 0.1F);
+			return stack;
+		}
+		EquipmentSlot pick = null;
+		int lowest = Integer.MAX_VALUE;
+		for (EquipmentSlot slot : ARMOR) {
+			int t = armorTier(mob.getItemBySlot(slot));
+			if (t < armor && (t < lowest || t == lowest && r.nextBoolean())) {
+				lowest = t;
+				pick = slot;
+			}
+		}
+		if (pick == null) {
+			if (canWeapon(mob) && wt < weapon) {
+				return upgradeTo(brain, r, 0, weapon);
+			}
+			return null;
+		}
+		int index = java.util.Arrays.asList(ARMOR).indexOf(pick);
+		ItemStack stack = new ItemStack(ARMOR_TIERS[armor][index]);
+		mob.setItemSlot(pick, stack);
+		mob.setDropChance(pick, 0.1F);
+		return stack;
+	}
+
 	/** True if a crafting session would give the mob something better. */
 	static boolean hasUpgrade(Mob mob) {
 		if (!Juggernaut.canWearArmor(mob)) {

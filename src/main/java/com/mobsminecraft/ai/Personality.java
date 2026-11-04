@@ -117,7 +117,11 @@ public enum Personality {
 		Personality p = b.personality;
 		boolean enemy = mob instanceof Enemy;
 		switch (p) {
-			case TACTICIAN -> {}
+			case TACTICIAN -> {
+				// Every tactician crafts in a fight (armour, ladders, stairs...).
+				b.combatCrafter = enemy && BlockWork.canBuild(mob);
+				b.combatCraftCooldown = 40 + r.nextInt(100);
+			}
 			case FIGHTER, GIFTER -> {
 				noCrafting(b);
 				noBuilding(b);
@@ -130,6 +134,9 @@ public enum Personality {
 			}
 			case BUILDER -> {
 				noCrafting(b);
+				// ...except in a fight: builders knock together ladders, stairs and armour.
+				b.combatCrafter = enemy;
+				b.combatCraftCooldown = 40 + r.nextInt(100);
 				b.houseBuilder = true;
 				b.outpostBuilder = enemy;
 				b.gardener = true;
