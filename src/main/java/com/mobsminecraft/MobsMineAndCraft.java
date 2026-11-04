@@ -25,6 +25,24 @@ public class MobsMineAndCraft implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ServerTickEvents.END_LEVEL_TICK.register(TimedCleanup::tick);
+		// /modsmac nametags true|false: show every mob's personality above its head (for debugging).
+		net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
+			net.minecraft.commands.Commands.literal("modsmac")
+				.requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
+				.then(net.minecraft.commands.Commands.literal("nametags")
+					.executes(ctx -> {
+						ctx.getSource().sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+							"Personality name tags are " + (com.mobsminecraft.world.NameTags.enabled() ? "on" : "off")), false);
+						return 1;
+					})
+					.then(net.minecraft.commands.Commands.argument("enabled", com.mojang.brigadier.arguments.BoolArgumentType.bool())
+						.executes(ctx -> {
+							boolean on = com.mojang.brigadier.arguments.BoolArgumentType.getBool(ctx, "enabled");
+							com.mobsminecraft.world.NameTags.set(on);
+							ctx.getSource().sendSuccess(() -> net.minecraft.network.chat.Component.literal(
+								"Personality name tags " + (on ? "on" : "off")), true);
+							return 1;
+						})))));
 		// Mob-built blocks are saved with the world: every few minutes and when the server stops.
 		ServerTickEvents.END_LEVEL_TICK.register(level -> {
 			if (level.getGameTime() % 6000 == 0) {

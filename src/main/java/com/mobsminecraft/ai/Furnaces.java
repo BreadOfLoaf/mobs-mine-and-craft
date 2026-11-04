@@ -130,7 +130,11 @@ final class Furnaces {
 				return false;
 			}
 			RandomSource r = mob.getRandom();
-			brain.cookCooldown = hostile ? 300 + r.nextInt(600) : 1200 + r.nextInt(1800);
+			brain.cookCooldown = hostile ? 1500 + r.nextInt(1500) : 1200 + r.nextInt(1800);
+			// Monsters only cook in peace and quiet, with no player around to interrupt.
+			if (hostile && level.getNearestPlayer(mob, 24.0) != null) {
+				return false;
+			}
 			BlockPos furnace = BlockWork.findNearest(level, mob.blockPosition(), 12, s -> s.getBlock() instanceof AbstractFurnaceBlock);
 			if (furnace == null) {
 				furnace = brain.placeAdjacent(level, Blocks.FURNACE.defaultBlockState()

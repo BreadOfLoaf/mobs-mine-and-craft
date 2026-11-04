@@ -31,8 +31,9 @@ final class Knights {
 			// Never a Juggernaut itself.
 			knight.addTag(Juggernaut.ROLLED_TAG);
 			gear(knight, r);
-			knight.setPersistenceRequired();
+			// Knights stay only as long as their Juggernaut would (no piling up of permanent mobs).
 			if (juggernaut.isPersistenceRequired()) {
+				knight.setPersistenceRequired();
 				knight.addTag("playtest");
 			}
 			level.addFreshEntity(knight);

@@ -94,7 +94,8 @@ final class Personalities {
 	/** Walks up to the nearest player and gives them something every so often. Never fights. */
 	private static boolean gifter(SmartBrain b, ServerLevel level) {
 		Mob mob = b.mob;
-		if (b.giftsLeft <= 0) {
+		// Only seeks the player out when it has a gift ready; in between it just wanders about like any mob.
+		if (b.giftsLeft <= 0 || b.giftCooldown > 0) {
 			return false;
 		}
 		Player player = nearestPlayer(level, mob, 24.0);
@@ -111,14 +112,11 @@ final class Personalities {
 		if (mob.tickCount % 20 == 0) {
 			level.sendParticles(ParticleTypes.HEART, mob.getX(), mob.getEyeY() + 0.5, mob.getZ(), 1, 0.2, 0.1, 0.2, 0.0);
 		}
-		if (b.giftCooldown > 0) {
-			return true;
-		}
 		RandomSource r = mob.getRandom();
 		toss(level, mob, player, gift(level, r));
 		level.sendParticles(ParticleTypes.HAPPY_VILLAGER, mob.getX(), mob.getEyeY(), mob.getZ(), 8, 0.4, 0.3, 0.4, 0.0);
 		b.giftsLeft--;
-		b.giftCooldown = 300 + r.nextInt(400);
+		b.giftCooldown = 1200 + r.nextInt(1800);
 		com.mobsminecraft.debug.AiStats.add("gift");
 		return true;
 	}
@@ -364,6 +362,9 @@ final class Personalities {
 	 */
 	private static boolean crafter(SmartBrain b, ServerLevel level, LivingEntity target, boolean griefing) {
 		Mob mob = b.mob;
+		if (b.crafterItem != null) {
+			return deliver(b, level);
+		}
 		if (b.crafterTicks == 0 && keepAway(b, target, 8.0, true)) {
 			return true;
 		}
@@ -403,14 +404,60 @@ final class Personalities {
 		if (made.isEmpty()) {
 			return false;
 		}
-		toss(level, mob, ally, made);
-		com.mobsminecraft.debug.AiStats.add("crafter_gave:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(made.getItem()).getPath());
+		// Walk it over and hand it to them (nothing left lying on the ground).
+		b.crafterItem = made;
+		b.crafterFor = ally;
+		b.crafterTicks = 0;
+		b.crafterGiven.put(ally.getUUID(), mob.tickCount);
+
+		return true;
+	}
+
+	/** Carries the crafted item to the ally and equips or stores it for them. */
+	private static boolean deliver(SmartBrain b, ServerLevel level) {
+		Mob mob = b.mob;
+		Mob ally = b.crafterFor;
+		if (ally == null || !ally.isAlive() || ++b.crafterTicks > 240 || ally.distanceTo(mob) > 32.0F) {
+			b.crafterItem = null;
+			b.crafterFor = null;
+			b.crafterTicks = 0;
+			return false;
+		}
+		if (mob.distanceTo(ally) > 2.5F) {
+			b.walkTo(ally.position(), b.walkSpeed() * 1.2);
+			return true;
+		}
+		ItemStack item = b.crafterItem;
+		b.crafterItem = null;
+		b.crafterFor = null;
+		b.crafterTicks = 0;
+		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+		mob.getLookControl().setLookAt(ally);
+		level.playSound(null, ally.blockPosition(), SoundEvents.ARMOR_EQUIP_GENERIC.value(), SoundSource.NEUTRAL, 0.8F, 1.0F);
+		level.sendParticles(ParticleTypes.HAPPY_VILLAGER, ally.getX(), ally.getEyeY(), ally.getZ(), 5, 0.3, 0.3, 0.3, 0.0);
+		EquipmentSlot slot = item.is(Items.SHIELD) ? EquipmentSlot.OFFHAND : ally.getEquipmentSlotForItem(item);
+		boolean gear = item.is(Items.SHIELD) || slot.getType() == EquipmentSlot.Type.HUMANOID_ARMOR || Gear.weaponTier(item) > 0;
+		if (gear) {
+			ally.setItemSlot(slot, item);
+			ally.setDropChance(slot, 0.1F);
+		} else {
+			Inventory.store(((com.mobsminecraft.SmartMobHolder) ally).mmc$getBrain(), item);
+		}
+		com.mobsminecraft.debug.AiStats.add("crafter_gave:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item.getItem()).getPath());
+		if (++b.crafterMade >= 8) {
+			b.crafterMade = 0;
+			b.crafterCooldown = 2400 + mob.getRandom().nextInt(2400);
+		}
 		return true;
 	}
 
 	private static Mob needyAlly(ServerLevel level, Mob mob) {
 		Mob best = null;
 		for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(14.0), m -> m != mob && m.isAlive() && m instanceof Enemy == mob instanceof Enemy)) {
+			Integer last = ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain().crafterGiven.get(m.getUUID());
+			if (last != null && mob.tickCount - last < 2400) {
+				continue; // already made something for this one recently (and maybe it couldn't use it)
+			}
 			if (!craftFor(m, null).isEmpty() && (best == null || m.distanceToSqr(mob) < best.distanceToSqr(mob))) {
 				best = m;
 			}

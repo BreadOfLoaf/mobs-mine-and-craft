@@ -44,7 +44,7 @@ public class Playtest implements ModInitializer {
 	/** One test setup: arena tweaks, mobs to spawn, and how the bot behaves. */
 	record Scenario(String name, int ticks, String description, BiConsumer<Run, BlockPos> setup, Map<String, Integer> mobs, double ring, Behaviour bot) {}
 
-	enum Behaviour { STAND, FIGHT, KITE, SPECTATE }
+	enum Behaviour { STAND, FIGHT, KITE, SPECTATE, PLAYER }
 
 	static final Map<String, Scenario> SCENARIOS = new LinkedHashMap<>();
 
@@ -158,6 +158,8 @@ public class Playtest implements ModInitializer {
 			mobs("skeleton", 4), 14, Behaviour.STAND));
 		add(new Scenario("hero", 1500, "Hero zombies against a sword-swinging bot: do they flee and come back as Juggernauts?", (run, o) -> {},
 			mobs("zombie", 3), 8, Behaviour.FIGHT));
+		add(new Scenario("survival", 12000, "A bot plays survival in an ordinary generated world: natural spawns, day and night, mining, building, fighting back.",
+			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -306,7 +308,9 @@ public class Playtest implements ModInitializer {
 			this.level = server.overworld();
 			this.scenario = scenario;
 			this.index = index;
-			this.origin = new BlockPos(3000 + index * 300, 120, 3000);
+			this.origin = scenario.bot() == Behaviour.PLAYER
+				? new BlockPos(-40000 + index * 3000 + (int) (System.nanoTime() % 1000), 64, 40000)
+				: new BlockPos(3000 + index * 300, 120, 3000);
 			this.botStart = Vec3.atBottomCenterOf(this.origin.above());
 		}
 
@@ -316,6 +320,10 @@ public class Playtest implements ModInitializer {
 		}
 
 		void start() {
+			if (this.scenario.bot() == Behaviour.PLAYER) {
+				this.startSurvival();
+				return;
+			}
 			int x = this.origin.getX();
 			int z = this.origin.getZ();
 			int east = this.scenario.bot() == Behaviour.KITE ? 80 : 40;
@@ -348,6 +356,58 @@ public class Playtest implements ModInitializer {
 
 			AiStats.reset();
 			cmd("tick sprint %d", this.scenario.ticks());
+		}
+
+		/** An ordinary generated world: no arena, natural mob spawning, time passing, starting at dusk. */
+		private SurvivalBot survivalBot;
+		private final Map<java.util.UUID, String> census = new LinkedHashMap<>();
+		private int buildersBusyMax;
+
+		private void startSurvival() {
+			cmd("gamerule max_block_modifications 5000000");
+			cmd("gamerule spawn_mobs true");
+			cmd("gamerule advance_time true");
+			cmd("gamerule advance_weather false");
+			cmd("gamerule mob_griefing true");
+			cmd("time set 12500");
+			cmd("weather clear");
+			cmd("difficulty normal");
+			cmd("modsmac nametags true");
+			// Somewhere on dry land: spiral out from the origin until the surface isn't water.
+			int bx = this.origin.getX(), bz = this.origin.getZ(), y = 64;
+			search:
+			for (int ring = 0; ring < 12; ring++) {
+				for (int k = 0; k < Math.max(1, ring * 8); k++) {
+					double a = k * Math.PI * 2 / Math.max(1, ring * 8);
+					int x = this.origin.getX() + (int) (Math.cos(a) * ring * 48);
+					int z = this.origin.getZ() + (int) (Math.sin(a) * ring * 48);
+					this.level.getChunk(x >> 4, z >> 4);
+					int h = this.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+					BlockPos ground = new BlockPos(x, h - 1, z);
+					if (this.level.getFluidState(ground).isEmpty() && this.level.getFluidState(ground.above()).isEmpty() && h > 62) {
+						bx = x; bz = z; y = h;
+						break search;
+					}
+				}
+			}
+			this.botStart = new Vec3(bx + 0.5, y, bz + 0.5);
+			this.bot = Bot.spawn(this.server, this.level, "Tester", this.botStart);
+			this.bot.hold(new ItemStack(Items.IRON_SWORD));
+			this.survivalBot = new SurvivalBot(this.bot, this.level);
+			AiStats.reset();
+			cmd("tick sprint %d", this.scenario.ticks());
+			LOG.info("[playtest] run {}: survival at {}", this.index, this.botStart);
+		}
+
+		/** Every mob seen near the bot, with its personality; and how many are building at once. */
+		private void takeCensus() {
+			int busy = 0;
+			for (Mob m : this.level.getEntitiesOfClass(Mob.class, this.bot.player.getBoundingBox().inflate(64.0), Mob::isAlive)) {
+				var brain = ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain();
+				this.census.putIfAbsent(m.getUUID(), BuiltInRegistries.ENTITY_TYPE.getKey(m.getType()).getPath() + "/" + brain.personalityName());
+				if (brain.buildProgress() >= 0) busy++;
+			}
+			this.buildersBusyMax = Math.max(this.buildersBusyMax, busy);
 		}
 
 		/** Spawns the mobs once the arena's chunks (and their entity storage) have loaded. */
@@ -404,6 +464,12 @@ public class Playtest implements ModInitializer {
 				case KITE -> {
 					if (this.ticks < 600) {
 						this.bot.walkToward(this.bot.player.position().add(10, 0, 0), 0.08);
+					}
+				}
+				case PLAYER -> {
+					this.survivalBot.tick();
+					if (this.ticks % 200 == 0) {
+						this.takeCensus();
 					}
 				}
 				case FIGHT -> {
@@ -666,6 +732,22 @@ public class Playtest implements ModInitializer {
 					sb.append(String.format(Locale.ROOT, "  gear %-9s alive=%s %s%n", t.type, t.mob.isAlive(), eq));
 				}
 			}
+			if (this.scenario.bot() == Behaviour.PLAYER) {
+				sb.append(String.format(Locale.ROOT, "Bot: mined %d blocks, placed %d, swung at mobs %d times; ended at %s (game time %d)%n",
+					this.survivalBot.blocksMined, this.survivalBot.blocksPlaced, this.survivalBot.attacks, this.bot.player.blockPosition(), this.level.getGameTime() % 24000));
+				Map<String, Integer> byPersona = new java.util.TreeMap<>();
+				Map<String, Integer> seenTypes = new java.util.TreeMap<>();
+				for (String v : this.census.values()) {
+					byPersona.merge(v.substring(v.indexOf('/') + 1), 1, Integer::sum);
+					seenTypes.merge(v.substring(0, v.indexOf('/')), 1, Integer::sum);
+				}
+				sb.append("Mobs seen within 64 blocks: ").append(this.census.size()).append(" by type ").append(seenTypes).append('\n');
+				sb.append("  by personality ").append(byPersona).append('\n');
+				sb.append("  most mobs building at once: ").append(this.buildersBusyMax).append('\n');
+				Map<String, Integer> pairs = new java.util.TreeMap<>();
+				for (String v : this.census.values()) pairs.merge(v, 1, Integer::sum);
+				sb.append("  type/personality ").append(pairs).append('\n');
+			}
 			sb.append("AI actions: ").append(AiStats.snapshot().isEmpty() ? "none" : AiStats.snapshot().toString()).append('\n');
 			String report = sb.toString();
 			LOG.info("\n{}", report);
@@ -680,6 +762,11 @@ public class Playtest implements ModInitializer {
 			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, 120);
 			cmd("forceload remove %d %d %d %d", x - 40, z - 40, x + 80, z + 40);
 			cmd("tick unfreeze");
+			if (this.scenario.bot() == Behaviour.PLAYER) {
+				cmd("modsmac nametags false");
+				cmd("gamerule spawn_mobs false");
+				cmd("gamerule advance_time false");
+			}
 			return new Result(this.scenario.name(), this.firstHit, this.damage, windows == 0 ? 0 : stuck / (double) windows);
 		}
 	}

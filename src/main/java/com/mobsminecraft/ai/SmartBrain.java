@@ -275,6 +275,9 @@ public final class SmartBrain {
 	int crafterCooldown;
 	int crafterTicks;
 	Mob crafterFor;
+	final java.util.Map<java.util.UUID, Integer> crafterGiven = new java.util.HashMap<>();
+	int crafterMade;
+	ItemStack crafterItem;
 	BlockPos crafterTable;
 	int torches;
 	BlockPos stashPos;
@@ -293,6 +296,14 @@ public final class SmartBrain {
 	int cleanupCooldown;
 	BlockPos cleanupTarget;
 	private boolean digAny;
+	// Building budget for reaching a dig target, and targets it gave up on (unreachable) for a while
+	private int digBuildBudget;
+	private boolean lastStepPlaced;
+	private final it.unimi.dsi.fastutil.longs.LongOpenHashSet badDigTargets = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+	// Debug personality name tag (/modsmac nametags)
+	private boolean ownNameTag;
+	private String nameTagText;
 
 	// Going after items on the ground (see Looting)
 	net.minecraft.world.entity.item.ItemEntity lootItem;
@@ -443,6 +454,54 @@ public final class SmartBrain {
 		return this.housePlan != null;
 	}
 
+	/** Shows (or removes) the personality name tag, without touching names players gave their mobs. */
+	private void updateNameTag() {
+		if (!com.mobsminecraft.world.NameTags.enabled()) {
+			if (this.ownNameTag) {
+				this.mob.setCustomName(null);
+				this.mob.setCustomNameVisible(false);
+				this.ownNameTag = false;
+				this.nameTagText = null;
+			}
+			return;
+		}
+		if (this.mob.hasCustomName() && !this.ownNameTag) {
+			return;
+		}
+		// Bats, fish and the like: a personality means nothing for them, so no tag.
+		if (!BlockWork.canBuild(this.mob) && !(this.mob instanceof Enemy)) {
+			return;
+		}
+		String name = this.personality.name().charAt(0) + this.personality.name().substring(1).toLowerCase();
+		if (this.personality == Personality.HERO && this.heroDone) {
+			name = "Hero (risen)";
+		}
+		if (Juggernaut.isJuggernaut(this.mob) && !(this.personality == Personality.HERO && this.heroDone)) {
+			name = "Juggernaut " + name;
+		} else if (this.knightOf != null) {
+			name = "Knight " + name;
+		}
+		if (name.equals(this.nameTagText)) {
+			return;
+		}
+		net.minecraft.ChatFormatting color = switch (this.personality) {
+			case FIGHTER -> net.minecraft.ChatFormatting.RED;
+			case TACTICIAN -> net.minecraft.ChatFormatting.GOLD;
+			case BUILDER -> net.minecraft.ChatFormatting.GREEN;
+			case ENGINEER -> net.minecraft.ChatFormatting.DARK_RED;
+			case CRAFTER -> net.minecraft.ChatFormatting.AQUA;
+			case MINEMAN -> net.minecraft.ChatFormatting.GRAY;
+			case IMPOSTER -> net.minecraft.ChatFormatting.DARK_PURPLE;
+			case HERO -> net.minecraft.ChatFormatting.YELLOW;
+			case GIFTER -> net.minecraft.ChatFormatting.LIGHT_PURPLE;
+			case GRIEFER -> net.minecraft.ChatFormatting.DARK_GREEN;
+		};
+		this.mob.setCustomName(net.minecraft.network.chat.Component.literal(name).withStyle(color));
+		this.mob.setCustomNameVisible(true);
+		this.ownNameTag = true;
+		this.nameTagText = name;
+	}
+
 	boolean eating() {
 		return this.eatFood != null;
 	}
@@ -570,6 +629,9 @@ public final class SmartBrain {
 			this.init();
 		}
 		this.tickCooldowns();
+		if (this.mob.tickCount % 20 == 0) {
+			this.updateNameTag();
+		}
 		Inventory.tickPickup(this, level);
 		if (this.miningPos == null && this.stashedHand != null) {
 			this.restoreHand();
@@ -898,6 +960,11 @@ public final class SmartBrain {
 	// ------------------------------------------------------------------ chasing: bridge, tunnel, tower, dig
 
 	private void chaseAssist(ServerLevel level, LivingEntity target) {
+		// A player in the water isn't reached by bridging, towering or digging (boats handle that).
+		if (target.isInWater() || target.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.Boat) {
+			this.assistTicks = 0;
+			return;
+		}
 		if (--this.pathCheckCooldown <= 0) {
 			this.pathCheckCooldown = 20;
 			Path path = this.mob.getNavigation().createPath(target, 1);
@@ -1024,11 +1091,13 @@ public final class SmartBrain {
 			}
 			boolean safeDrop = dy < -1.0 && drop <= 3;
 			if (!safeDrop) {
+				this.lastStepPlaced = true;
 				com.mobsminecraft.debug.AiStats.add("bridge_block");
 			}
 			if (!safeDrop && !this.place(level, next.below(), this.buildState(), true)) {
 				return this.blocks > 0;
 			}
+			// Counts as building toward the goal even if the block couldn't go in.
 		}
 
 		this.mob.getNavigation().stop();
@@ -1751,12 +1820,24 @@ public final class SmartBrain {
 			}
 			double dy = c.y - this.mob.getY();
 			double horiz = Math.sqrt(Math.pow(c.x - this.mob.getX(), 2) + Math.pow(c.z - this.mob.getZ(), 2));
+			// Only a few blocks of towering/bridging to reach something to mine; beyond that it's unreachable.
+			if (this.digBuildBudget < 0) {
+				this.giveUpDigTarget();
+				return false;
+			}
 			if (dy < -1.5 && horiz < 1.5) {
+				this.digBuildBudget--;
 				this.startDig(1, false);
 			} else if (dy > 2.5 && horiz < 2.0) {
+				this.digBuildBudget--;
 				this.startTower(1);
-			} else if (!this.stepToward(level, c)) {
-				this.digTarget = null;
+			} else {
+				this.lastStepPlaced = false;
+				if (!this.stepToward(level, c)) {
+					this.giveUpDigTarget();
+				} else if (this.lastStepPlaced) {
+					this.digBuildBudget--;
+				}
 			}
 			return true;
 		}
@@ -1797,7 +1878,26 @@ public final class SmartBrain {
 		return false;
 	}
 
+	private void giveUpDigTarget() {
+		if (this.digTarget != null) {
+			if (this.badDigTargets.size() > 256) {
+				this.badDigTargets.clear();
+			}
+			this.badDigTargets.add(this.digTarget.asLong());
+			com.mobsminecraft.debug.AiStats.add("dig_unreachable");
+		}
+		this.digTarget = null;
+		this.digAny = false;
+	}
+
 	void setDigTarget(BlockPos pos, boolean drops) {
+		if (this.mob.tickCount % 2400 < 20) {
+			this.badDigTargets.clear();
+		}
+		if (this.badDigTargets.contains(pos.asLong())) {
+			return;
+		}
+		this.digBuildBudget = 6;
 		this.digTarget = pos;
 		this.digTargetDrops = drops;
 		this.digTimeout = 300;
