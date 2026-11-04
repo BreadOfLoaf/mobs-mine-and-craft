@@ -25,10 +25,15 @@ final class Griefer {
 		Mob mob = b.mob;
 		RandomSource r = mob.getRandom();
 		// Keep well clear of any lit TNT (its own or anyone's) until it goes off.
-		net.minecraft.world.entity.item.PrimedTnt tnt = null;
+		net.minecraft.world.entity.Entity tnt = null;
 		// Griefers keep 8 blocks from lit TNT; everyone else just gets out of the blast (5 blocks).
 		double keep = grieves(b) ? 8.0 : 5.0;
 		for (var t : level.getEntitiesOfClass(net.minecraft.world.entity.item.PrimedTnt.class, mob.getBoundingBox().inflate(keep))) {
+			if (tnt == null || t.distanceToSqr(mob) < tnt.distanceToSqr(mob)) tnt = t;
+		}
+		// A lit TNT minecart (an engineer's trap) rolls and hits harder: give it a wider berth.
+		for (var t : level.getEntitiesOfClass(net.minecraft.world.entity.vehicle.minecart.MinecartTNT.class, mob.getBoundingBox().inflate(keep + 3.0),
+			net.minecraft.world.entity.vehicle.minecart.MinecartTNT::isPrimed)) {
 			if (tnt == null || t.distanceToSqr(mob) < tnt.distanceToSqr(mob)) tnt = t;
 		}
 		if (tnt != null) {

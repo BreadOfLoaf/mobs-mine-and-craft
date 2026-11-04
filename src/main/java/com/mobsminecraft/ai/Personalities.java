@@ -457,6 +457,9 @@ final class Personalities {
 		}
 		level.setBlock(ground, Blocks.TNT.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
 		level.setBlock(plate, Blocks.STONE_PRESSURE_PLATE.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+		if (mob instanceof net.minecraft.world.entity.monster.Enemy) {
+			com.mobsminecraft.world.MobMines.add(level, plate);
+		}
 		level.playSound(null, plate, SoundEvents.STONE_PLACE, SoundSource.HOSTILE, 0.6F, 1.2F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		// Unexploded mines are cleared away after a few minutes.

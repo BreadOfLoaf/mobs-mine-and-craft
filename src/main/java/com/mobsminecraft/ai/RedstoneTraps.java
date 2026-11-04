@@ -354,6 +354,12 @@ final class RedstoneTraps {
 		if (brain.rsKind != Kind.TNT_CART && !inLineOfFire(brain, target)) {
 			return true;
 		}
+		// Doesn't send the cart while an ally is close to the player: it would blow up its own side.
+		if (brain.rsKind == Kind.TNT_CART && target != null && !level.getEntitiesOfClass(Mob.class, target.getBoundingBox().inflate(6.0),
+			m -> m != mob && m.isAlive() && (m instanceof net.minecraft.world.entity.monster.Enemy) == (mob instanceof net.minecraft.world.entity.monster.Enemy)).isEmpty()) {
+			if (mob.tickCount % 40 == 0) com.mobsminecraft.debug.AiStats.add("rs_cart_held:ally_near");
+			return true;
+		}
 		((ButtonBlock) state.getBlock()).press(state, level, brain.rsButton, null);
 		level.playSound(null, brain.rsButton, SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.HOSTILE, 0.6F, 0.6F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);

@@ -1922,11 +1922,18 @@ public final class SmartBrain {
 			boolean willing = hostile
 				? o.personality == Personality.BUILDER || o.personality == Personality.TACTICIAN || o.personality == Personality.HERO
 				: !o.personality.peaceful() && o.personality != Personality.GRIEFER;
-			if (!willing || o.housePlan != null || o.helpingWith != null || o.prospectPhase != Prospecting.NONE || o.prospectLeader != null) continue;
+			// Another builder still waiting for help at a site it hasn't started can drop its own plan and pitch in here.
+			boolean waitingToo = o.housePlan != null && !o.soloBuild && o.houseIndex == 0 && o.partner == null && o.partnerWaitTicks > 0;
+			if (!willing || o.housePlan != null && !waitingToo || o.helpingWith != null || o.prospectPhase != Prospecting.NONE || o.prospectLeader != null) continue;
+			if (waitingToo && o.partnerWaitTicks > this.partnerWaitTicks) continue; // the one who's waited longer keeps its site
 			if (best == null || m.distanceToSqr(this.mob) < best.distanceToSqr(this.mob)) best = m;
 		}
 		if (best != null) {
 			SmartBrain o = brainOf(best);
+			if (o.housePlan != null) {
+				o.endBuild();
+				com.mobsminecraft.debug.AiStats.add("build_merged");
+			}
 			o.helpingWith = this;
 			o.helperIndex = -1;
 			this.partner = o;

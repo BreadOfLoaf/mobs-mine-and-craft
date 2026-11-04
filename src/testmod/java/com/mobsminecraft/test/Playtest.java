@@ -291,7 +291,8 @@ public class Playtest implements ModInitializer {
 		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
 			if (current != null && entity instanceof Mob m && m.entityTags().contains(current.runTag)) {
 				AiStats.add("death:" + ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain().personalityName() + ":" + source.type().msgId()
-					+ (source.getEntity() == null ? "" : ":" + BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath()));
+					+ (source.getEntity() != null ? ":" + BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath()
+						: source.getDirectEntity() != null ? ":by_" + BuiltInRegistries.ENTITY_TYPE.getKey(source.getDirectEntity().getType()).getPath() : ""));
 			}
 		});
 		// The bot never actually takes damage: every hit is recorded and cancelled.
