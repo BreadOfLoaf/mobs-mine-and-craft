@@ -194,8 +194,7 @@ final class Furnaces {
 				return false;
 			}
 			if (mob.getHealth() < mob.getMaxHealth()) {
-				mob.heal(4.0F);
-				level.playSound(null, mob.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.NEUTRAL, 0.8F, 1.0F);
+				Eating.start(brain, level, result, Eating.EAT_TICKS, () -> mob.heal(4.0F));
 				result.shrink(1);
 			}
 			if (!result.isEmpty()) {

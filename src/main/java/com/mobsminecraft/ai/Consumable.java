@@ -196,10 +196,7 @@ public enum Consumable {
 			if (cooldown > 0) {
 				brain.consumableCooldown = cooldown * 2 + r.nextInt(20);
 				com.mobsminecraft.debug.AiStats.add("use:" + c.type.name().toLowerCase());
-				// Consumables never run out, except golden apples, which are eaten for real.
-				if (c.type.isApple() && --c.uses <= 0) {
-					brain.carried.remove(c);
-				}
+				// Consumables never run out, except golden apples, which are used up once actually eaten.
 				mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 				return;
 			}
@@ -230,23 +227,27 @@ public enum Consumable {
 			case FLINT_AND_STEEL -> griefing && dist < (mob instanceof Villager ? 7 : 5) && sight ? useFlintAndSteel(level, mob, target) : 0;
 			case FIREWORK_ROCKET -> dist > 3 && dist < 18 && sight ? shootFirework(level, mob, target) : 0;
 			case TRIDENT -> dist > 3 && dist < 20 && sight ? throwTrident(level, mob, target) : 0;
-			case GOLDEN_APPLE -> hp < 0.45F && c.uses > 0 ? eatApple(level, mob, new ItemStack(Items.GOLDEN_APPLE)) : 0;
-			case ENCHANTED_GOLDEN_APPLE -> hp < 0.35F && c.uses > 0 ? eatApple(level, mob, new ItemStack(Items.ENCHANTED_GOLDEN_APPLE)) : 0;
+			case GOLDEN_APPLE -> hp < 0.45F && c.uses > 0 ? eatApple(brain, c, level, mob, new ItemStack(Items.GOLDEN_APPLE)) : 0;
+			case ENCHANTED_GOLDEN_APPLE -> hp < 0.35F && c.uses > 0 ? eatApple(brain, c, level, mob, new ItemStack(Items.ENCHANTED_GOLDEN_APPLE)) : 0;
 		};
 	}
 
 	/** Eats or drinks the item, which applies its normal effects (healing, teleport, clearing effects...). */
+	/** Eats or drinks over 1.6 seconds like a player; the effect applies when it's done (not if interrupted). */
 	private static int consume(ServerLevel level, Mob mob, ItemStack stack, int cooldown) {
-		stack.finishUsingItem(level, mob);
-		return cooldown;
+		SmartBrain brain = ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain();
+		ItemStack s = stack.copy();
+		return Eating.start(brain, level, stack, Eating.EAT_TICKS, () -> s.finishUsingItem(level, mob)) ? cooldown : 0;
 	}
 
-	private static int eatApple(ServerLevel level, Mob mob, ItemStack apple) {
-		level.playSound(null, mob.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.HOSTILE, 1.0F, 1.0F);
-		level.playSound(null, mob.blockPosition(), SoundEvents.PLAYER_BURP, SoundSource.HOSTILE, 0.5F, 1.0F);
-		level.sendParticles(new net.minecraft.core.particles.ItemParticleOption(net.minecraft.core.particles.ParticleTypes.ITEM, apple.getItem()),
-			mob.getX(), mob.getEyeY() - 0.2, mob.getZ(), 10, 0.2, 0.1, 0.2, 0.05);
-		return consume(level, mob, apple, 60);
+	private static int eatApple(SmartBrain brain, Carried c, ServerLevel level, Mob mob, ItemStack apple) {
+		ItemStack s = apple.copy();
+		return Eating.start(brain, level, apple, Eating.EAT_TICKS, () -> {
+			s.finishUsingItem(level, mob);
+			if (--c.uses <= 0) {
+				brain.carried.remove(c);
+			}
+		}) ? 60 : 0;
 	}
 
 	private static boolean hasHarmfulEffect(Mob mob) {

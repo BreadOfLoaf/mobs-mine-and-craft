@@ -75,8 +75,6 @@ final class MobSpecials {
 				creeper.ignite();
 				com.mobsminecraft.debug.AiStats.add("creeper_breach");
 			}
-		} else if (mob instanceof AbstractSkeleton) {
-			skeletonWall(brain, level, target, griefing);
 		} else if (mob instanceof Villager villager) {
 			villagerAttack(brain, level, villager, target);
 		}

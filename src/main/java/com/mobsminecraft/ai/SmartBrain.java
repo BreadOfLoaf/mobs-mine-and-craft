@@ -85,7 +85,7 @@ public final class SmartBrain {
 	private int coverCooldown;
 
 	// Tool crafting
-	private boolean toolCrafter;
+	boolean toolCrafter;
 	private int toolCraftTimer = -1;
 	private int craftingTicks;
 	private BlockPos craftStation;
@@ -108,7 +108,7 @@ public final class SmartBrain {
 	private BlockPos castleCenter;
 
 	// Mining: stealing ores (dropped) and gathering building blocks (kept)
-	private int oreCooldown;
+	int oreCooldown;
 	private int gatherCooldown;
 	private BlockPos digTarget;
 	private boolean digTargetDrops;
@@ -269,6 +269,54 @@ public final class SmartBrain {
 	boolean forceBunker;
 	boolean forceClock;
 
+	// Personality (see Personality, Personalities)
+	Personality personality = Personality.TACTICIAN;
+	boolean greedy;
+	int crafterCooldown;
+	int crafterTicks;
+	Mob crafterFor;
+	BlockPos crafterTable;
+	int torches;
+	BlockPos stashPos;
+	int stashTicks;
+	LivingEntity imposterVictim;
+	int imposterCooldown;
+	int heroPhase;
+	int heroTicks;
+	LivingEntity heroFrom;
+	BlockPos heroTable;
+	boolean heroDone;
+	int giftsLeft;
+	int giftCooldown;
+	int griefCooldown;
+	int griefTntCooldown;
+	int cleanupCooldown;
+	BlockPos cleanupTarget;
+	private boolean digAny;
+
+	// Going after items on the ground (see Looting)
+	net.minecraft.world.entity.item.ItemEntity lootItem;
+	int lootTicks;
+	Mob lootRival;
+	int lootRivalTicks;
+
+	// Eating takes time (see Eating)
+	ItemStack eatFood;
+	int eatTicks;
+	int eatDuration;
+	Runnable eatFinish;
+	float eatHealth;
+	ItemStack eatStashedOffhand;
+	float eatOffhandDrop;
+
+	// Skeleton cover fighting (see Cover)
+	int coverPhase;
+	int coverTicks;
+	int coverPhaseTicks;
+	BlockPos coverHide;
+	BlockPos coverPeek;
+	boolean coverShot;
+
 	// Mob-on-mob fights (see Brawl)
 	boolean brave;
 	LivingEntity brawlFoe;
@@ -358,6 +406,15 @@ public final class SmartBrain {
 			case "bunker" -> { this.mob.setHealth(this.mob.getMaxHealth() * 0.3F); this.cookedMeat = 2; this.recoverCooldown = 0; this.forceBunker = true; }
 			case "clock" -> { this.engineer = true; this.rsCooldown = 0; this.combatCrafter = false; this.forceClock = true; }
 			case "brave" -> this.brave = true;
+			case "greedy" -> this.greedy = true;
+			case "nosniper" -> { this.sniper = false; this.engineer = false; this.combatCrafter = false; this.wallCooldown = 0; }
+			case "mess" -> {
+				// Leave a little fight mess nearby: a 3x3x3 block of cobblestone (for cleanup tests).
+				BlockPos base = this.mob.blockPosition().offset(3, 0, 0);
+				for (int x = 0; x < 3; x++) for (int y = 0; y < 3; y++) for (int z = 0; z < 3; z++) {
+					this.place((ServerLevel) this.mob.level(), base.offset(x, y, z), Blocks.COBBLESTONE.defaultBlockState(), true);
+				}
+			}
 			case "sniper" -> { this.sniper = true; this.sniperCooldown = 0; this.blocks = 64; this.engineer = false; this.combatCrafter = false; }
 			case "hurt" -> { this.mob.setHealth(this.mob.getMaxHealth() * 0.3F); this.rawMeat = 2; this.cookedMeat = 1; this.recoverCooldown = 0; }
 			case "juggernaut" -> { Juggernaut.make(this.mob, r); this.knightsSpawned = false; this.pickaxe = Juggernaut.pickaxe(this.mob, r); this.castleBuilder = true; this.houseBuilder = false; this.houseBuilt = false;
@@ -384,6 +441,27 @@ public final class SmartBrain {
 			this.planHouse(level);
 		}
 		return this.housePlan != null;
+	}
+
+	boolean eating() {
+		return this.eatFood != null;
+	}
+
+	/** The mob's personality (for reports). */
+	public String personalityName() {
+		return this.personality.name().toLowerCase();
+	}
+
+	/** Test hook: give this mob a particular personality (before its first tick). */
+	public void debugPersonality(String name) {
+		Personality.set(this.mob, Personality.valueOf(name.toUpperCase()));
+		if (this.initialized) {
+			this.personality = Personality.valueOf(name.toUpperCase());
+			Personality.apply(this, this.mob.getRandom());
+			if (this.personality == Personality.GIFTER) {
+				this.giftsLeft = 4;
+			}
+		}
 	}
 
 	/** Test hook: is this mob perched on its sniper tower? */
@@ -466,6 +544,22 @@ public final class SmartBrain {
 			Knights.init(this);
 		}
 		MobSpecials.init(this, r);
+		// Personality last: it switches the abilities rolled above on or off.
+		this.personality = Personality.of(this.mob, r);
+		Personality.apply(this, r);
+		if (this.knightOf != null) {
+			this.shieldWall = true;
+		}
+		if (this.personality == Personality.GIFTER) {
+			this.giftsLeft = 3 + r.nextInt(4);
+		}
+		if (this.personality == Personality.GIFTER || this.personality == Personality.MINEMAN) {
+			this.brave = false;
+		}
+		// Only the Juggernauts that like building put up a fort.
+		if (this.castleBuilder && this.personality != Personality.TACTICIAN && this.personality != Personality.BUILDER) {
+			this.castleBuilder = false;
+		}
 	}
 
 	public void tick() {
@@ -485,6 +579,14 @@ public final class SmartBrain {
 		boolean griefing = level.getGameRules().get(GameRules.MOB_GRIEFING);
 		LivingEntity target = this.resolveTarget(level);
 		boolean canBuild = griefing && BlockWork.canBuild(this.mob) && !this.mob.isPassenger();
+		// Gifters, imposters and minemen leave the player alone.
+		Personalities.dropPlayerTarget(this);
+		if (this.personality.peaceful() && target instanceof Player) {
+			target = null;
+		}
+		if (Eating.tick(this, level)) {
+			return;
+		}
 
 		if (!this.knightsSpawned) {
 			this.knightsSpawned = true;
@@ -497,6 +599,12 @@ public final class SmartBrain {
 			return;
 		}
 		if (Brawl.tick(this, level, target)) {
+			return;
+		}
+		if (this.miningPos == null && Personalities.tick(this, level, target, griefing)) {
+			return;
+		}
+		if (this.miningPos == null && this.housePlan == null && Looting.tick(this, level, target)) {
 			return;
 		}
 
@@ -573,6 +681,13 @@ public final class SmartBrain {
 			Gardening.tick(this, level);
 			return;
 		}
+		// Griefers wreck things whether or not there's a fight on.
+		if (Griefer.grieves(this) && this.digTarget == null) {
+			Griefer.tick(this, level, target);
+		}
+		if (this.digAny && this.digTarget != null && this.tickDigTarget(level)) {
+			return;
+		}
 
 		if (target != null) {
 			float hp = this.mob.getHealth() / this.mob.getMaxHealth();
@@ -589,6 +704,13 @@ public final class SmartBrain {
 				return;
 			}
 			if (Stairs.tick(this, level, target)) {
+				return;
+			}
+			// Fighters (and gifters) just charge like vanilla mobs: no tricks, no crafting.
+			if (!this.personality.usesTricks()) {
+				return;
+			}
+			if (Cover.tick(this, level, target, griefing)) {
 				return;
 			}
 			// Knights guard their Juggernaut while it builds its fort.
@@ -674,6 +796,9 @@ public final class SmartBrain {
 		if (this.gardener && Gardening.tryPlant(this, level)) {
 			return;
 		}
+		if (this.personality == Personality.BUILDER && this.digTarget == null && Cleanup.tick(this, level)) {
+			return;
+		}
 		if (this.tickDigTarget(level)) {
 			return;
 		}
@@ -697,6 +822,12 @@ public final class SmartBrain {
 		if (this.anvilCooldown > 0) this.anvilCooldown--;
 		if (this.supportCooldown > 0) this.supportCooldown--;
 		if (this.boatCooldown > 0) this.boatCooldown--;
+		if (this.crafterCooldown > 0 && this.crafterCooldown != Integer.MAX_VALUE) this.crafterCooldown--;
+		if (this.imposterCooldown > 0) this.imposterCooldown--;
+		if (this.giftCooldown > 0) this.giftCooldown--;
+		if (this.griefCooldown > 0) this.griefCooldown--;
+		if (this.griefTntCooldown > 0) this.griefTntCooldown--;
+		if (this.cleanupCooldown > 0) this.cleanupCooldown--;
 		if (this.rsCooldown > 0) this.rsCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
@@ -1242,6 +1373,9 @@ public final class SmartBrain {
 		if (!useStock) {
 			// Structures (houses, outposts, traps...) are protected; towers, bridges and walls are not.
 			MobBuilt.mark(level, pos);
+		} else {
+			// ...those are fight mess, which Builders tidy up later.
+			Cleanup.add(level, pos);
 		}
 		com.mobsminecraft.debug.AiStats.add("block_placed");
 		level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
@@ -1412,7 +1546,8 @@ public final class SmartBrain {
 			if (!(this.houseBuilder || this.castleBuilder) || this.houseBuilt) {
 				return false;
 			}
-			if (this.mob.tickCount < 200 || !this.mob.onGround() || this.mob.getRandom().nextInt(this.castleBuilder ? 100 : 200) != 0) {
+			if (this.mob.tickCount < 200 || !this.mob.onGround() || (!this.castleBuilder && this.houseCooldown > 0)
+				|| this.mob.getRandom().nextInt(this.castleBuilder ? 100 : this.personality == Personality.BUILDER ? 60 : 200) != 0) {
 				return false;
 			}
 			if (this.castleBuilder) {
@@ -1482,8 +1617,9 @@ public final class SmartBrain {
 			if (this.castleBuilder) {
 				this.houseBuilt = true;
 				this.castleCenter = this.houseCenter;
-			} else if (this.isPassive()) {
-				this.houseCooldown = 6000 + this.mob.getRandom().nextInt(6000);
+			} else if (this.isPassive() || this.personality == Personality.BUILDER || this.personality == Personality.GRIEFER) {
+				// Builders (and griefers) keep at it: another build after a break.
+				this.houseCooldown = (this.personality == Personality.BUILDER ? 2400 : 6000) + this.mob.getRandom().nextInt(4000);
 			} else {
 				this.houseBuilt = true;
 			}
@@ -1557,10 +1693,15 @@ public final class SmartBrain {
 
 	/** Surface houses above ground; underground, an outpost, cave house or mineshaft instead. */
 	private void planHouse(ServerLevel level) {
+		RandomSource r = this.mob.getRandom();
 		if (Outpost.isUnderground(level, this.mob)) {
 			Underground.plan(this, level);
+		} else if (this.personality == Personality.GRIEFER) {
+			Houses.plan(this, level, Houses.DIRT_HUT, false);
+		} else if (this.personality == Personality.BUILDER && r.nextFloat() < 0.25F) {
+			Castle.plan(this, level);
 		} else {
-			Houses.plan(this, level, Houses.forBiome(level, this.mob.blockPosition(), this.mob.getRandom()), false);
+			Houses.plan(this, level, Houses.forBiome(level, this.mob.blockPosition(), r), false);
 		}
 		if (this.housePlan != null) {
 			com.mobsminecraft.debug.AiStats.add("build_started");
@@ -1590,9 +1731,11 @@ public final class SmartBrain {
 	private boolean tickDigTarget(ServerLevel level) {
 		if (this.digTarget != null) {
 			BlockState state = level.getBlockState(this.digTarget);
-			boolean valid = this.digTargetDrops ? BlockWork.isOre(state) : BlockWork.isBuildingMaterial(state);
+			boolean valid = this.digAny ? !state.isAir() && BlockWork.canMine(this.mob, level, this.digTarget, state)
+				: this.digTargetDrops ? BlockWork.isOre(state) : BlockWork.isBuildingMaterial(state);
 			if (--this.digTimeout <= 0 || !valid) {
 				this.digTarget = null;
+				this.digAny = false;
 				return false;
 			}
 			Vec3 c = Vec3.atCenterOf(this.digTarget);
@@ -1600,6 +1743,7 @@ public final class SmartBrain {
 			if (this.mob.distanceToSqr(c) <= reachSq) {
 				this.startMining(this.digTarget, !this.digTargetDrops);
 				this.digTarget = null;
+				this.digAny = false;
 				return true;
 			}
 			if (!this.mob.onGround() && !this.mob.isInWater()) {
@@ -1657,5 +1801,13 @@ public final class SmartBrain {
 		this.digTarget = pos;
 		this.digTargetDrops = drops;
 		this.digTimeout = 300;
+		this.digAny = false;
+	}
+
+	/** Dig out any block (griefing, cleaning up): not just building materials or ores. */
+	void setDigTargetAny(BlockPos pos) {
+		this.setDigTarget(pos, false);
+		this.digAny = true;
+		this.digTimeout = 200;
 	}
 }

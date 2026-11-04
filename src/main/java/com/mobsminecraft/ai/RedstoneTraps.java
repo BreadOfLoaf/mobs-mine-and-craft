@@ -64,11 +64,12 @@ final class RedstoneTraps {
 			return false;
 		}
 		double dist = mob.distanceTo(target);
-		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || waveSize(level, mob, target) < 2) {
+		boolean specialist = brain.personality == Personality.ENGINEER;
+		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || waveSize(level, mob, target) < (specialist ? 1 : 2)) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
-		brain.rsCooldown = 400 + r.nextInt(300);
+		brain.rsCooldown = specialist ? 160 + r.nextInt(160) : 400 + r.nextInt(300);
 		Vec3 d = target.position().subtract(mob.position());
 		Direction dir = Direction.getApproximateNearest(d.x, 0.0, d.z);
 		// Dispensers only reach about 11 blocks; farther away, send a TNT cart down a track instead.
@@ -76,7 +77,7 @@ final class RedstoneTraps {
 			return planCart(brain, level, dir, r);
 		}
 		// Now and then: a self-firing turret on a repeater clock.
-		if ((brain.forceClock || r.nextFloat() < 0.12F) && dist > 6.0 && planClock(brain, level, dir)) {
+		if ((brain.forceClock || r.nextFloat() < (specialist ? 0.5F : 0.12F)) && dist > 6.0 && planClock(brain, level, dir)) {
 			brain.forceClock = false;
 			return true;
 		}

@@ -65,7 +65,8 @@ public final class BlockWork {
 			return false;
 		}
 		// Never break what mobs built (their houses, bridges, outposts).
-		if (com.mobsminecraft.world.MobBuilt.contains(level, pos)) {
+		// (Griefers don't care whose it is.)
+		if (com.mobsminecraft.world.MobBuilt.contains(level, pos) && !Griefer.grieves(((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain())) {
 			return false;
 		}
 		return !state.requiresCorrectToolForDrops() || tool(mob, state).isCorrectToolForDrops(state);

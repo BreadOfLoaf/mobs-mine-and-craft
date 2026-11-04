@@ -148,6 +148,16 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 4), 7, Behaviour.FIGHT));
 		add(new Scenario("sniper", 1500, "Sniper skeletons build towers; do they stay on top?", (run, o) -> {},
 			mobs("skeleton", 4), 15, Behaviour.STAND));
+		add(new Scenario("personas", 1800, "Bot fights one zombie of each personality plus two skeletons.", (run, o) -> {},
+			mobs("zombie", 10, "skeleton", 2), 9, Behaviour.FIGHT));
+		add(new Scenario("loot", 900, "Gear, apples and pearls on the ground among zombies (half greedy); spectator bot.", (run, o) -> {},
+			mobs("zombie", 6), 6, Behaviour.SPECTATE));
+		add(new Scenario("cleanup", 1500, "Builder zombies tidy up blocks of fight mess; spectator bot far away.", (run, o) -> {},
+			mobs("zombie", 4), 6, Behaviour.SPECTATE));
+		add(new Scenario("cover", 1200, "Skeletons fight from behind cover walls against a standing bot.", (run, o) -> {},
+			mobs("skeleton", 4), 14, Behaviour.STAND));
+		add(new Scenario("hero", 1500, "Hero zombies against a sword-swinging bot: do they flee and come back as Juggernauts?", (run, o) -> {},
+			mobs("zombie", 3), 8, Behaviour.FIGHT));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -451,6 +461,28 @@ public class Playtest implements ModInitializer {
 						brain.debugForce("hurt");
 					}
 				}
+				String[] personas = {"fighter", "tactician", "builder", "engineer", "crafter", "mineman", "imposter", "hero", "gifter", "griefer"};
+				int pi = 0;
+				for (Tracked t : this.tracked) {
+					var brain = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain();
+					switch (this.scenario.name()) {
+						case "personas" -> brain.debugPersonality(t.type.equals("zombie") && pi < personas.length ? personas[pi++] : "tactician");
+						case "loot" -> { brain.debugPersonality("fighter"); if (pi++ % 2 == 0) brain.debugForce("greedy"); }
+						case "cleanup" -> { brain.debugPersonality("builder"); if (pi++ == 0) brain.debugForce("mess"); }
+						case "hero" -> brain.debugPersonality("hero");
+						case "cover" -> { brain.debugPersonality("tactician"); brain.debugForce("nosniper"); }
+						default -> {}
+					}
+				}
+				if (this.scenario.name().equals("loot")) {
+					String[] items = {"iron_sword", "iron_chestplate", "golden_apple", "ender_pearl", "diamond_helmet", "shield", "cooked_beef", "iron_boots"};
+					for (int i = 0; i < items.length; i++) {
+						cmd("summon item %d 121 %d {Item:{id:\"minecraft:%s\",count:1},PickupDelay:20s}", this.origin.getX() - 4 + i, this.origin.getZ() + (i % 2 == 0 ? 2 : -2), items[i]);
+					}
+				}
+				if (this.scenario.name().equals("cleanup") && this.tracked.size() > 1) {
+					((com.mobsminecraft.SmartMobHolder) this.tracked.get(1).mob).mmc$getBrain().debugForce("mess");
+				}
 				if (this.scenario.name().startsWith("prospect") && !this.tracked.isEmpty()) {
 					((com.mobsminecraft.SmartMobHolder) this.tracked.get(0).mob).mmc$getBrain().debugForce("prospector");
 				}
@@ -600,6 +632,26 @@ public class Playtest implements ModInitializer {
 							AiStats.add("ench_level_" + ench.getLevel(e));
 						}
 					}
+				}
+			}
+			if (this.scenario.name().equals("juggernaut")) {
+				int gold = 0;
+				BlockPos.MutableBlockPos q = new BlockPos.MutableBlockPos();
+				for (int dx = -40; dx <= 40; dx++) for (int dz = -40; dz <= 40; dz++) for (int dy = -1; dy <= 4; dy++) {
+					q.set(this.origin.getX() + dx, 121 + dy, this.origin.getZ() + dz);
+					if (this.level.getBlockState(q).is(net.minecraft.world.level.block.Blocks.GOLD_BLOCK)) gold++;
+				}
+				sb.append("  gold blocks in forts: ").append(gold).append('\n');
+			}
+			if (this.scenario.name().equals("personas") || this.scenario.name().equals("loot")) {
+				for (Tracked t : this.tracked) {
+					StringBuilder eq = new StringBuilder();
+					for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+						ItemStack st = t.mob.getItemBySlot(slot);
+						if (!st.isEmpty()) eq.append(BuiltInRegistries.ITEM.getKey(st.getItem()).getPath()).append(' ');
+					}
+					var brain = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain();
+					sb.append(String.format(Locale.ROOT, "  %-9s %-10s alive=%s hp=%.0f/%.0f %s%n", t.type, brain.personalityName(), t.mob.isAlive(), t.mob.getHealth(), t.mob.getMaxHealth(), eq));
 				}
 			}
 			if (this.scenario.name().equals("gear") || this.scenario.name().equals("juggernaut") || this.scenario.name().equals("shields")) {

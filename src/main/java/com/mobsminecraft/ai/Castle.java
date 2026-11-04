@@ -62,32 +62,51 @@ final class Castle {
 		Direction side = gate.getClockWise();
 		List<BlockPos> plan = new ArrayList<>();
 		List<BlockState> states = new ArrayList<>();
+		BlockState floorA = Blocks.STONE_BRICKS.defaultBlockState();
+		BlockState floorB = r.nextBoolean() ? Blocks.POLISHED_ANDESITE.defaultBlockState() : Blocks.CRACKED_STONE_BRICKS.defaultBlockState();
 
-		// Foundations where the ground dips.
+		// Foundations: fill any dip under the walls and the courtyard (up to 4 deep), so nothing hangs in the air.
 		for (int x = -radius; x <= radius; x++) {
 			for (int z = -radius; z <= radius; z++) {
-				if (isPerimeter(x, z, radius) && !BlockWork.isFloor(level, c.offset(x, -1, z))) {
-					plan.add(c.offset(x, -1, z));
-					states.add(Blocks.COBBLESTONE.defaultBlockState());
+				int depth = 0;
+				while (depth < 4 && !BlockWork.isFloor(level, c.offset(x, -2 - depth, z))) {
+					depth++;
+				}
+				for (int y = -1 - depth; y < -1; y++) {
+					if (!BlockWork.isFloor(level, c.offset(x, y, z))) {
+						plan.add(c.offset(x, y, z));
+						states.add(Blocks.COBBLESTONE.defaultBlockState());
+					}
 				}
 			}
 		}
-		// Walls, laid course by course so the castle visibly rises.
+		// A proper stone floor across the whole fort (replacing the grass), laid in a checker pattern.
+		for (int x = -radius; x <= radius; x++) {
+			for (int z = -radius; z <= radius; z++) {
+				plan.add(c.offset(x, -1, z));
+				states.add(isPerimeter(x, z, radius) ? Blocks.COBBLESTONE.defaultBlockState() : ((x + z) & 1) == 0 ? floorA : floorB);
+			}
+		}
+		BlockPos backCenter = c.relative(back, radius);
+		// Walls, laid course by course so the castle visibly rises. Gold is set into the back wall behind the throne.
 		for (int y = 0; y < wallHeight; y++) {
 			for (int x = -radius; x <= radius; x++) {
 				for (int z = -radius; z <= radius; z++) {
 					if (!isPerimeter(x, z, radius)) {
 						continue;
 					}
+					BlockPos p = c.offset(x, y, z);
 					boolean gateway = y <= 2 && x == gate.getStepX() * radius && z == gate.getStepZ() * radius;
-					if (!gateway) {
-						plan.add(c.offset(x, y, z));
-						states.add(wall);
+					if (gateway) {
+						continue;
 					}
+					plan.add(p);
+					boolean backrest = p.getX() == backCenter.getX() && p.getZ() == backCenter.getZ() && (y == 1 || y == 2);
+					states.add(backrest ? Blocks.GOLD_BLOCK.defaultBlockState() : wall);
 				}
 			}
 		}
-		// Crenellations on top, and taller corner towers.
+		// Crenellations on top, and taller corner towers with a torch on each.
 		for (int x = -radius; x <= radius; x++) {
 			for (int z = -radius; z <= radius; z++) {
 				if (isPerimeter(x, z, radius) && (x + z) % 2 == 0) {
@@ -102,24 +121,40 @@ final class Castle {
 					plan.add(c.offset(x, y, z));
 					states.add(Blocks.COBBLESTONE.defaultBlockState());
 				}
+				plan.add(c.offset(x, wallHeight + 3, z));
+				states.add(Blocks.TORCH.defaultBlockState());
 			}
 		}
-		// Red carpet from the gate to the throne.
-		for (int k = radius - 1; k >= -1; k--) {
+		// The throne against the back wall: a stone seat between two gold armrests, lanterns on top.
+		BlockPos seat = c.relative(back, radius - 1);
+		plan.add(seat);
+		states.add(Blocks.STONE_BRICK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, back));
+		for (Direction d : new Direction[] {side, side.getOpposite()}) {
+			plan.add(seat.relative(d));
+			states.add(Blocks.GOLD_BLOCK.defaultBlockState());
+			plan.add(seat.relative(d).above());
+			states.add(Blocks.LANTERN.defaultBlockState());
+		}
+		// Red carpet from the gate up to the throne.
+		for (int k = radius - 1; k >= -(radius - 2); k--) {
 			plan.add(c.relative(gate, k));
 			states.add(Blocks.CARPET.pick(DyeColor.RED).defaultBlockState());
 		}
-		BlockPos throne = c.relative(back, 2);
-		plan.add(throne);
-		states.add(Blocks.STONE_BRICK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, back));
-		plan.add(throne.relative(side));
-		states.add(Blocks.TORCH.defaultBlockState());
-		plan.add(throne.relative(side.getOpposite()));
-		states.add(Blocks.TORCH.defaultBlockState());
+		// Workshop along the side walls, lanterns in the front corners.
 		plan.add(c.relative(side, radius - 1));
 		states.add(Blocks.CRAFTING_TABLE.defaultBlockState());
 		plan.add(c.relative(side.getOpposite(), radius - 1));
 		states.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, side).setValue(AbstractFurnaceBlock.LIT, true));
+		if (radius >= 4) {
+			plan.add(c.relative(side, radius - 1).relative(gate, 1));
+			states.add(Blocks.CHEST.defaultBlockState().setValue(net.minecraft.world.level.block.ChestBlock.FACING, side.getOpposite()));
+			plan.add(c.relative(side.getOpposite(), radius - 1).relative(gate, 1));
+			states.add(Blocks.ANVIL.defaultBlockState().setValue(net.minecraft.world.level.block.AnvilBlock.FACING, gate));
+		}
+		for (Direction d : new Direction[] {side, side.getOpposite()}) {
+			plan.add(c.relative(gate, radius - 1).relative(d, radius - 1));
+			states.add(Blocks.LANTERN.defaultBlockState());
+		}
 
 		brain.housePlan = plan;
 		brain.houseStates = states;

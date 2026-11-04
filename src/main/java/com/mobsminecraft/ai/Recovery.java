@@ -166,9 +166,10 @@ final class Recovery {
 			return true;
 		}
 		if (brain.cookedMeat > 0) {
-			eat(brain, level, new ItemStack(COOKED_MEAT[brain.meatType]), 7.0F);
-			brain.cookedMeat--;
-			com.mobsminecraft.debug.AiStats.add("eat_meat");
+			eat(brain, level, new ItemStack(COOKED_MEAT[brain.meatType]), 7.0F, () -> {
+				brain.cookedMeat = Math.max(0, brain.cookedMeat - 1);
+				com.mobsminecraft.debug.AiStats.add("eat_meat");
+			});
 		} else if (brain.rawMeat > 0 && griefing) {
 			BlockPos fire = brain.placeAdjacent(level, Blocks.CAMPFIRE.defaultBlockState());
 			if (fire != null) {
@@ -178,26 +179,29 @@ final class Recovery {
 				brain.recoverCookTicks = 0;
 			} else {
 				// No room for a fire: eat it raw.
-				eat(brain, level, new ItemStack(RAW_MEAT[brain.meatType]), 3.0F);
-				brain.rawMeat--;
-				com.mobsminecraft.debug.AiStats.add("eat_raw_meat");
+				eat(brain, level, new ItemStack(RAW_MEAT[brain.meatType]), 3.0F, () -> {
+					brain.rawMeat = Math.max(0, brain.rawMeat - 1);
+					com.mobsminecraft.debug.AiStats.add("eat_raw_meat");
+				});
 			}
 		} else if (brain.rawMeat > 0) {
-			eat(brain, level, new ItemStack(RAW_MEAT[brain.meatType]), 3.0F);
-			brain.rawMeat--;
-			com.mobsminecraft.debug.AiStats.add("eat_raw_meat");
+			eat(brain, level, new ItemStack(RAW_MEAT[brain.meatType]), 3.0F, () -> {
+				brain.rawMeat = Math.max(0, brain.rawMeat - 1);
+				com.mobsminecraft.debug.AiStats.add("eat_raw_meat");
+			});
 		} else if (hasApple(brain) && brain.consumableCooldown > 5) {
 			brain.consumableCooldown = 0;
 		}
 		return true;
 	}
 
-	static void eat(SmartBrain brain, ServerLevel level, ItemStack food, float heal) {
+	/** Eats like a player does: takes 1.6 seconds, and the food only counts if it isn't interrupted. */
+	static void eat(SmartBrain brain, ServerLevel level, ItemStack food, float heal, Runnable consumed) {
 		Mob mob = brain.mob;
-		mob.heal(heal);
-		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
-		level.playSound(null, mob.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.HOSTILE, 1.0F, 0.9F + mob.getRandom().nextFloat() * 0.2F);
-		level.playSound(null, mob.blockPosition(), SoundEvents.PLAYER_BURP, SoundSource.HOSTILE, 0.5F, 0.9F);
+		Eating.start(brain, level, food, Eating.EAT_TICKS, () -> {
+			mob.heal(heal);
+			consumed.run();
+		});
 		level.sendParticles(new ItemParticleOption(ParticleTypes.ITEM, food.getItem()), mob.getX(), mob.getEyeY() - 0.2, mob.getZ(), 8, 0.2, 0.1, 0.2, 0.05);
 	}
 
@@ -264,11 +268,12 @@ final class Recovery {
 	/** Out of combat, a hurt mob eats meat it carries. */
 	static void snack(SmartBrain brain, ServerLevel level) {
 		Mob mob = brain.mob;
-		if (mob.tickCount % 40 != 0 || mob.getHealth() / mob.getMaxHealth() > 0.6F || brain.cookedMeat <= 0) {
+		if (mob.tickCount % 40 != 0 || mob.getHealth() / mob.getMaxHealth() > 0.6F || brain.cookedMeat <= 0 || brain.eating()) {
 			return;
 		}
-		eat(brain, level, new ItemStack(COOKED_MEAT[brain.meatType]), 7.0F);
-		brain.cookedMeat--;
-		com.mobsminecraft.debug.AiStats.add("eat_meat");
+		eat(brain, level, new ItemStack(COOKED_MEAT[brain.meatType]), 7.0F, () -> {
+			brain.cookedMeat = Math.max(0, brain.cookedMeat - 1);
+			com.mobsminecraft.debug.AiStats.add("eat_meat");
+		});
 	}
 }

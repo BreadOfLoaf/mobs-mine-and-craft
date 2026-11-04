@@ -140,7 +140,7 @@ public final class Inventory {
 
 	// ------------------------------------------------------------------ consumables <-> items
 
-	private static Consumable consumableFor(ItemStack stack) {
+	static Consumable consumableFor(ItemStack stack) {
 		if (stack.is(Items.SNOWBALL)) return Consumable.SNOWBALLS;
 		if (stack.is(Items.EGG)) return Consumable.EGGS;
 		if (stack.is(Items.WIND_CHARGE)) return Consumable.WIND_CHARGES;

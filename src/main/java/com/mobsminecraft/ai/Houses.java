@@ -61,6 +61,9 @@ final class Houses {
 	private static final Palette BRICK = new Palette(Blocks.BRICKS, Blocks.STONE_BRICKS, Blocks.DARK_OAK_PLANKS, Blocks.DARK_OAK_STAIRS,
 		Blocks.SPRUCE_PLANKS, Blocks.DARK_OAK_DOOR, Blocks.GLASS_PANE);
 
+	/** Griefers' ugly dirt huts. */
+	static final Palette DIRT_HUT = new Palette(Blocks.DIRT, Blocks.DIRT, Blocks.DIRT, null, null, null, null);
+
 	private static final Palette[] ALL = {
 		OAK, SPRUCE, BIRCH, JUNGLE, ACACIA, DARK_OAK, CHERRY,
 		new Palette(Blocks.COBBLESTONE, Blocks.OAK_LOG, Blocks.STONE_BRICKS, Blocks.STONE_BRICK_STAIRS, Blocks.OAK_PLANKS, Blocks.OAK_DOOR, Blocks.GLASS_PANE),

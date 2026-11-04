@@ -31,7 +31,6 @@ final class Knights {
 			// Never a Juggernaut itself.
 			knight.addTag(Juggernaut.ROLLED_TAG);
 			gear(knight, r);
-			knight.setCustomName(Component.literal("Knight"));
 			knight.setPersistenceRequired();
 			if (juggernaut.isPersistenceRequired()) {
 				knight.addTag("playtest");
@@ -59,12 +58,9 @@ final class Knights {
 
 	/** Called once when the knight's brain starts: knights are supporters and shield-bearers. */
 	static void init(SmartBrain brain) {
-		brain.supporter = true;
+		// Knights get a personality like anyone else; they all hold the shield line and guard their lord.
 		brain.shieldWall = true;
-		brain.engineer = false;
-		brain.combatCrafter = false;
 		brain.houseBuilder = false;
-		brain.tunneler = false;
 	}
 
 	/** Keeps the knight near its Juggernaut when it has nothing better to do. Returns true while walking back. */
