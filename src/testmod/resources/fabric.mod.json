@@ -1,0 +1,10 @@
+{
+	"schemaVersion": 1,
+	"id": "mmctest",
+	"version": "1.0.0",
+	"name": "Mobs Mine And Craft - playtest harness",
+	"description": "Dev-only: a scripted bot player and AI playtest scenarios.",
+	"environment": "*",
+	"entrypoints": { "main": ["com.mobsminecraft.test.Playtest"] },
+	"depends": { "mobsmineandcraft": "*", "fabric-api": "*" }
+}

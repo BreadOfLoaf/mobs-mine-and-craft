@@ -1,0 +1,414 @@
+package com.mobsminecraft.test;
+
+import com.mobsminecraft.debug.AiStats;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.BiConsumer;
+import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Dev-only playtest harness. {@code /playtest <scenario|all> [runs]} builds an arena far from spawn, puts a scripted
+ * bot player in it, spawns mobs, fast-forwards, and writes a report of what the mob AI did.
+ */
+public class Playtest implements ModInitializer {
+	static final Logger LOG = LoggerFactory.getLogger("playtest");
+
+	/** One test setup: arena tweaks, mobs to spawn, and how the bot behaves. */
+	record Scenario(String name, int ticks, String description, BiConsumer<Run, BlockPos> setup, Map<String, Integer> mobs, double ring, Behaviour bot) {}
+
+	enum Behaviour { STAND, FIGHT, KITE }
+
+	static final Map<String, Scenario> SCENARIOS = new LinkedHashMap<>();
+
+	static {
+		add(new Scenario("open_field", 1800, "Bot stands in an open field at night.", (run, o) -> {},
+			mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 2), 20, Behaviour.STAND));
+		add(new Scenario("pillar", 1800, "Bot stands on top of an 8-block dirt pillar.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 128 %d minecraft:dirt", o.getX(), o.getZ(), o.getX(), o.getZ());
+			run.botStart = Vec3.atBottomCenterOf(o.above(9));
+		}, mobs("zombie", 6, "skeleton", 2), 14, Behaviour.STAND));
+		add(new Scenario("bunker", 1800, "Bot hides in a sealed cobblestone bunker (3x3 inside, roofed).", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:cobblestone hollow", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+		}, mobs("zombie", 6, "creeper", 2), 14, Behaviour.STAND));
+		add(new Scenario("moat", 1800, "Bot stands on a 7x7 island ringed by a 5-wide, 4-deep moat.", (run, o) -> {
+			run.cmd("fill %d 117 %d %d 120 %d minecraft:water", o.getX() - 8, o.getZ() - 8, o.getX() + 8, o.getZ() + 8);
+			run.cmd("fill %d 117 %d %d 119 %d minecraft:dirt", o.getX() - 3, o.getZ() - 3, o.getX() + 3, o.getZ() + 3);
+			run.cmd("fill %d 120 %d %d 120 %d minecraft:grass_block", o.getX() - 3, o.getZ() - 3, o.getX() + 3, o.getZ() + 3);
+		}, mobs("zombie", 6, "skeleton", 2), 18, Behaviour.STAND));
+		add(new Scenario("wave", 1800, "Bot fights back with an iron sword against a big mixed wave.", (run, o) -> {},
+			mobs("zombie", 6, "skeleton", 4, "creeper", 2, "spider", 2, "witch", 1, "husk", 1), 18, Behaviour.FIGHT));
+		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
+			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
+	}
+
+	private static void add(Scenario s) {
+		SCENARIOS.put(s.name(), s);
+	}
+
+	private static Map<String, Integer> mobs(Object... kv) {
+		Map<String, Integer> m = new LinkedHashMap<>();
+		for (int i = 0; i < kv.length; i += 2) {
+			m.put((String) kv[i], (Integer) kv[i + 1]);
+		}
+		return m;
+	}
+
+	private static final Deque<Scenario> QUEUE = new ArrayDeque<>();
+	private static final List<Run.Result> RESULTS = new ArrayList<>();
+	private static Run current;
+	private static int runCounter;
+
+	@Override
+	public void onInitialize() {
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
+			Commands.literal("playtest")
+				.then(Commands.argument("scenario", StringArgumentType.word())
+					.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), 1))
+					.then(Commands.argument("runs", IntegerArgumentType.integer(1, 20))
+						.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), IntegerArgumentType.getInteger(ctx, "runs")))))));
+
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			if (current != null) {
+				if (current.tick()) {
+					RESULTS.add(current.finish());
+					current = null;
+					if (QUEUE.isEmpty()) {
+						writeSummary(server);
+					}
+				}
+			} else if (!QUEUE.isEmpty()) {
+				current = new Run(server, QUEUE.poll(), runCounter++);
+				current.start();
+			}
+		});
+
+		// The bot never actually takes damage: every hit is recorded and cancelled.
+		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
+			if (current != null && current.bot != null && entity == current.bot.player) {
+				current.recordDamage(source, amount);
+				return false;
+			}
+			return true;
+		});
+	}
+
+	private static int queue(String name, int runs) {
+		List<Scenario> picked = new ArrayList<>();
+		if (name.equals("all")) {
+			picked.addAll(SCENARIOS.values());
+		} else if (SCENARIOS.containsKey(name)) {
+			picked.add(SCENARIOS.get(name));
+		} else {
+			LOG.info("[playtest] unknown scenario '{}'. Known: all, {}", name, String.join(", ", SCENARIOS.keySet()));
+			return 0;
+		}
+		RESULTS.clear();
+		for (int i = 0; i < runs; i++) {
+			QUEUE.addAll(picked);
+		}
+		LOG.info("[playtest] queued {} run(s)", QUEUE.size());
+		return 1;
+	}
+
+	private static void writeSummary(MinecraftServer server) {
+		Map<String, List<Run.Result>> byScenario = new LinkedHashMap<>();
+		for (Run.Result r : RESULTS) {
+			byScenario.computeIfAbsent(r.scenario(), k -> new ArrayList<>()).add(r);
+		}
+		StringBuilder sb = new StringBuilder("=== PLAYTEST SUMMARY ===\n");
+		for (Map.Entry<String, List<Run.Result>> e : byScenario.entrySet()) {
+			List<Run.Result> rs = e.getValue();
+			double hitRate = rs.stream().filter(r -> r.firstHitTick() >= 0).count() / (double) rs.size();
+			double avgFirst = rs.stream().filter(r -> r.firstHitTick() >= 0).mapToInt(Run.Result::firstHitTick).average().orElse(-1);
+			double avgDamage = rs.stream().mapToDouble(Run.Result::damage).average().orElse(0);
+			double avgStuck = rs.stream().mapToDouble(Run.Result::stuckShare).average().orElse(0);
+			sb.append(String.format(Locale.ROOT, "%-11s runs=%d  bot hit in %3.0f%% of runs  first hit %5.1fs  damage %6.1f  stuck %3.0f%%%n",
+				e.getKey(), rs.size(), hitRate * 100, avgFirst / 20.0, avgDamage, avgStuck * 100));
+		}
+		LOG.info("\n{}", sb);
+		write(server, "summary", sb.toString());
+	}
+
+	static void write(MinecraftServer server, String name, String text) {
+		try {
+			Path dir = server.getServerDirectory().resolve("playtest");
+			Files.createDirectories(dir);
+			Files.writeString(dir.resolve(name + ".txt"), text);
+		} catch (IOException e) {
+			LOG.warn("[playtest] couldn't write report", e);
+		}
+	}
+
+	/** One run of one scenario. */
+	static final class Run {
+		record Result(String scenario, int firstHitTick, double damage, double stuckShare) {}
+
+		private static final class Tracked {
+			final Mob mob;
+			final String type;
+			double minDist = Double.MAX_VALUE;
+			Vec3 lastPos;
+			int windows;
+			int stuckWindows;
+			String lastStuckState;
+
+			Tracked(Mob mob) {
+				this.mob = mob;
+				this.type = BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).getPath();
+				this.lastPos = mob.position();
+			}
+		}
+
+		final MinecraftServer server;
+		final ServerLevel level;
+		final Scenario scenario;
+		final int index;
+		final BlockPos origin;
+		Vec3 botStart;
+		Bot bot;
+		private final List<Tracked> tracked = new ArrayList<>();
+		private final Map<String, Double> damageBy = new HashMap<>();
+		private double damage;
+		private int hits;
+		private int firstHit = -1;
+		private int ticks;
+		private int kills;
+
+		Run(MinecraftServer server, Scenario scenario, int index) {
+			this.server = server;
+			this.level = server.overworld();
+			this.scenario = scenario;
+			this.index = index;
+			this.origin = new BlockPos(3000 + index * 300, 120, 3000);
+			this.botStart = Vec3.atBottomCenterOf(this.origin.above());
+		}
+
+		void cmd(String format, Object... args) {
+			String command = String.format(Locale.ROOT, format, args);
+			this.server.getCommands().performPrefixedCommand(this.server.createCommandSourceStack().withSuppressedOutput(), command);
+		}
+
+		void start() {
+			int x = this.origin.getX();
+			int z = this.origin.getZ();
+			int east = this.scenario.bot() == Behaviour.KITE ? 80 : 40;
+			cmd("gamerule max_block_modifications 5000000");
+			cmd("gamerule spawn_mobs false");
+			cmd("gamerule advance_time false");
+			cmd("gamerule advance_weather false");
+			cmd("time set midnight");
+			cmd("weather clear");
+			cmd("difficulty hard");
+			cmd("forceload add %d %d %d %d", x - 40, z - 40, x + east, z + 40);
+			// Flat arena: stone base, dirt, grass, and open air above.
+			cmd("fill %d 112 %d %d 118 %d minecraft:stone", x - 40, z - 40, x + east, z + 40);
+			cmd("fill %d 119 %d %d 119 %d minecraft:dirt", x - 40, z - 40, x + east, z + 40);
+			cmd("fill %d 120 %d %d 120 %d minecraft:grass_block", x - 40, z - 40, x + east, z + 40);
+			cmd("fill %d 121 %d %d 170 %d minecraft:air", x - 40, z - 40, x + east, z + 40);
+			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, east + 40);
+			this.scenario.setup().accept(this, this.origin);
+
+			this.bot = Bot.spawn(this.server, this.level, "Tester", this.botStart);
+			if (this.scenario.bot() == Behaviour.FIGHT) {
+				this.bot.hold(new ItemStack(Items.IRON_SWORD));
+			}
+
+			int n = 0;
+			int total = this.scenario.mobs().values().stream().mapToInt(Integer::intValue).sum();
+			for (Map.Entry<String, Integer> e : this.scenario.mobs().entrySet()) {
+				for (int i = 0; i < e.getValue(); i++) {
+					double angle = this.scenario.bot() == Behaviour.KITE
+						? Math.PI + (n - total / 2.0) * 0.15
+						: n * (Math.PI * 2 / total);
+					double mx = x + 0.5 + Math.cos(angle) * this.scenario.ring();
+					double mz = z + 0.5 + Math.sin(angle) * this.scenario.ring();
+					spawn(e.getKey(), mx, mz);
+					n++;
+				}
+			}
+			for (Mob mob : this.level.getEntitiesOfClass(Mob.class, new AABB(this.origin).inflate(45), m -> m.entityTags().contains("playtest"))) {
+				this.tracked.add(new Tracked(mob));
+			}
+			AiStats.reset();
+			cmd("tick sprint %d", this.scenario.ticks());
+			LOG.info("[playtest] run {}: {} with {} mobs", this.index, this.scenario.name(), this.tracked.size());
+		}
+
+		/** Spawns a mob the way natural spawning does, so it gets its normal gear (skeletons need their bows). */
+		private void spawn(String id, double x, double z) {
+			net.minecraft.world.entity.EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getValue(net.minecraft.resources.Identifier.withDefaultNamespace(id));
+			if (!(type.create(this.level, net.minecraft.world.entity.EntitySpawnReason.COMMAND) instanceof Mob mob)) {
+				return;
+			}
+			mob.snapTo(x, 121, z, this.level.getRandom().nextFloat() * 360.0F, 0.0F);
+			mob.finalizeSpawn(this.level, this.level.getCurrentDifficultyAt(mob.blockPosition()), net.minecraft.world.entity.EntitySpawnReason.COMMAND, null);
+			mob.setPersistenceRequired();
+			mob.addTag("playtest");
+			this.level.addFreshEntityWithPassengers(mob);
+		}
+
+		/** Advances one tick. Returns true when the run is over. */
+		boolean tick() {
+			this.ticks++;
+			switch (this.scenario.bot()) {
+				case KITE -> {
+					if (this.ticks < 600) {
+						this.bot.walkToward(this.bot.player.position().add(10, 0, 0), 0.08);
+					}
+				}
+				case FIGHT -> {
+					if (this.ticks % 12 == 0) {
+						Mob nearest = null;
+						for (Tracked t : this.tracked) {
+							if (t.mob.isAlive() && t.mob.distanceTo(this.bot.player) < 3.5
+								&& (nearest == null || t.mob.distanceTo(this.bot.player) < nearest.distanceTo(this.bot.player))) {
+								nearest = t.mob;
+							}
+						}
+						if (nearest != null) {
+							this.bot.attack(nearest);
+							if (!nearest.isAlive()) {
+								this.kills++;
+							}
+						}
+					}
+				}
+				default -> {
+				}
+			}
+			this.bot.tick();
+			if (this.ticks % 10 == 0) {
+				for (Tracked t : this.tracked) {
+					if (t.mob.isAlive()) {
+						t.minDist = Math.min(t.minDist, t.mob.distanceTo(this.bot.player));
+					}
+				}
+			}
+			if (this.ticks % 100 == 0) {
+				for (Tracked t : this.tracked) {
+					if (!t.mob.isAlive()) {
+						continue;
+					}
+					Vec3 pos = t.mob.position();
+					boolean chasing = t.mob.getTarget() == this.bot.player;
+					boolean shooting = t.mob instanceof net.minecraft.world.entity.monster.RangedAttackMob
+						&& t.mob.distanceTo(this.bot.player) < 16.0 && t.mob.hasLineOfSight(this.bot.player);
+					if (chasing && !shooting && t.mob.distanceTo(this.bot.player) > 3.0) {
+						t.windows++;
+						if (pos.distanceTo(t.lastPos) < 1.0) {
+							t.stuckWindows++;
+							t.lastStuckState = String.format(Locale.ROOT, "dist=%.1f los=%s %s", t.mob.distanceTo(this.bot.player),
+								t.mob.hasLineOfSight(this.bot.player), ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugState());
+						}
+					}
+					t.lastPos = pos;
+				}
+			}
+			return this.ticks >= this.scenario.ticks();
+		}
+
+		private int lastHitTick = -100;
+		private float lastHitAmount;
+
+		void recordDamage(DamageSource source, float amount) {
+			// Vanilla: for 10 ticks after a hit, only damage above the last hit counts (and only the difference).
+			if (this.ticks - this.lastHitTick < 10) {
+				if (amount <= this.lastHitAmount) {
+					return;
+				}
+				float extra = amount - this.lastHitAmount;
+				this.lastHitAmount = amount;
+				amount = extra;
+			} else {
+				this.lastHitTick = this.ticks;
+				this.lastHitAmount = amount;
+			}
+			String who = source.getEntity() != null ? BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath() : "none";
+			String key = who + "/" + source.type().msgId();
+			this.damageBy.merge(key, (double) amount, Double::sum);
+			this.damage += amount;
+			this.hits++;
+			if (this.firstHit < 0) {
+				this.firstHit = this.ticks;
+			}
+		}
+
+		Result finish() {
+			Map<String, Integer> stats = AiStats.snapshot();
+			StringBuilder sb = new StringBuilder();
+			sb.append(String.format(Locale.ROOT, "=== %s (run %d) ===%n%s%n", this.scenario.name(), this.index, this.scenario.description()));
+			sb.append(String.format(Locale.ROOT, "Bot: %d hits, %.1f damage, first hit at %s%n", this.hits, this.damage,
+				this.firstHit < 0 ? "never" : String.format(Locale.ROOT, "%.1fs", this.firstHit / 20.0)));
+			this.damageBy.entrySet().stream().sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+				.forEach(e -> sb.append(String.format(Locale.ROOT, "  %-28s %6.1f%n", e.getKey(), e.getValue())));
+			if (this.scenario.bot() == Behaviour.FIGHT) {
+				sb.append("Bot kills: ").append(this.kills).append('\n');
+			}
+
+			Map<String, List<Tracked>> byType = new LinkedHashMap<>();
+			for (Tracked t : this.tracked) {
+				byType.computeIfAbsent(t.type, k -> new ArrayList<>()).add(t);
+			}
+			int windows = 0;
+			int stuck = 0;
+			sb.append("Mobs (type: alive/total, reached within 2.5 blocks, closest, stuck-while-chasing windows):\n");
+			for (Map.Entry<String, List<Tracked>> e : byType.entrySet()) {
+				List<Tracked> ts = e.getValue();
+				long alive = ts.stream().filter(t -> t.mob.isAlive()).count();
+				long reached = ts.stream().filter(t -> t.minDist < 2.5).count();
+				double closest = ts.stream().mapToDouble(t -> t.minDist).min().orElse(-1);
+				int w = ts.stream().mapToInt(t -> t.windows).sum();
+				int s = ts.stream().mapToInt(t -> t.stuckWindows).sum();
+				windows += w;
+				stuck += s;
+				sb.append(String.format(Locale.ROOT, "  %-10s %d/%d alive, %d reached, closest %.1f, stuck %d/%d%n",
+					e.getKey(), alive, ts.size(), reached, closest, s, w));
+			}
+			this.tracked.stream().filter(t -> t.lastStuckState != null).limit(6)
+				.forEach(t -> sb.append("  stuck ").append(t.type).append(": ").append(t.lastStuckState).append('\n'));
+			sb.append("AI actions: ").append(stats.isEmpty() ? "none" : stats.toString()).append('\n');
+			String report = sb.toString();
+			LOG.info("\n{}", report);
+			write(this.server, String.format(Locale.ROOT, "%02d-%s", this.index, this.scenario.name()), report);
+
+			this.bot.remove(this.server);
+			for (Tracked t : this.tracked) {
+				t.mob.discard();
+			}
+			int x = this.origin.getX();
+			int z = this.origin.getZ();
+			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, 120);
+			cmd("forceload remove %d %d %d %d", x - 40, z - 40, x + 80, z + 40);
+			cmd("tick unfreeze");
+			return new Result(this.scenario.name(), this.firstHit, this.damage, windows == 0 ? 0 : stuck / (double) windows);
+		}
+	}
+}

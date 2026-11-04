@@ -68,8 +68,13 @@ final class MobSpecials {
 			spiderWebs(brain, level, target, griefing);
 		} else if (mob instanceof Enderman) {
 			endermanBoats(brain, level, target);
-		} else if (mob instanceof Creeper) {
+		} else if (mob instanceof Creeper creeper) {
 			creeperTnt(brain, level, target);
+			// Breach: right next to the player but blocked by a wall, so blow the wall up.
+			if (!creeper.isIgnited() && creeper.distanceTo(target) < 4.0F && !creeper.hasLineOfSight(target) && griefing) {
+				creeper.ignite();
+				com.mobsminecraft.debug.AiStats.add("creeper_breach");
+			}
 		} else if (mob instanceof AbstractSkeleton) {
 			skeletonWall(brain, level, target, griefing);
 		} else if (mob instanceof Villager villager) {
@@ -98,6 +103,7 @@ final class MobSpecials {
 				placed++;
 			}
 		}
+		com.mobsminecraft.debug.AiStats.add("webs");
 		if (placed > 0) {
 			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			level.playSound(null, base, SoundEvents.SPIDER_AMBIENT, SoundSource.HOSTILE, 1.0F, 1.4F);
@@ -136,6 +142,7 @@ final class MobSpecials {
 				spawnBoat(level, r, t.x + Math.cos(a) * 1.6, t.y, t.z + Math.sin(a) * 1.6);
 			}
 		}
+		com.mobsminecraft.debug.AiStats.add("boats");
 		level.playSound(null, target.getX(), target.getY(), target.getZ(), SoundEvents.ENDERMAN_TELEPORT, SoundSource.HOSTILE, 1.0F, 0.7F);
 	}
 
@@ -191,6 +198,7 @@ final class MobSpecials {
 				continue;
 			}
 			brain.unlitTnt.add(p);
+				com.mobsminecraft.debug.AiStats.add("tnt_placed");
 			placed++;
 		}
 		if (placed > 0) {
@@ -208,7 +216,7 @@ final class MobSpecials {
 		}
 		Mob mob = brain.mob;
 		for (BlockPos p : brain.unlitTnt) {
-			if (!level.getBlockState(p).is(Blocks.TNT) || mob.distanceToSqr(Vec3.atCenterOf(p)) > 100.0) {
+			if (!level.getBlockState(p).is(Blocks.TNT) || mob.distanceToSqr(Vec3.atCenterOf(p)) > 256.0) {
 				continue;
 			}
 			mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
@@ -216,6 +224,7 @@ final class MobSpecials {
 			level.playSound(null, p, SoundEvents.FLINTANDSTEEL_USE, SoundSource.HOSTILE, 1.0F, 1.0F);
 			if (TntBlock.prime(level, p, mob, new ItemStack(Items.FLINT_AND_STEEL))) {
 				level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL_IMMEDIATE);
+				com.mobsminecraft.debug.AiStats.add("tnt_lit");
 			}
 		}
 		brain.unlitTnt.clear();
@@ -232,7 +241,9 @@ final class MobSpecials {
 		RandomSource r = mob.getRandom();
 		brain.wallCooldown = 500 + r.nextInt(400);
 
-		brain.planWall(level, target, 2, 1 + r.nextInt(3), 1 + r.nextInt(2), Blocks.COBBLESTONE.defaultBlockState(), true);
+		com.mobsminecraft.debug.AiStats.add("skeleton_wall");
+		// Waist-high so the skeleton can still shoot over it; taller posts at the ends.
+		brain.planWall(level, target, 2, 1 + r.nextInt(3), 1, Blocks.COBBLESTONE.defaultBlockState(), true);
 	}
 
 	/**
@@ -246,8 +257,13 @@ final class MobSpecials {
 		}
 		if (brain.sniperPhase == 3) {
 			if (brain.sniperNest != null && mob.blockPosition().distManhattan(brain.sniperNest) <= 1) {
-				brain.holdStill();
-				return true;
+				// Give up the perch after 5 seconds without a shot at the player.
+				brain.sniperBlindTicks = mob.hasLineOfSight(target) && mob.distanceTo(target) < 28 ? 0 : brain.sniperBlindTicks + 1;
+				if (brain.sniperBlindTicks < 100) {
+					brain.holdStill();
+					return true;
+				}
+				com.mobsminecraft.debug.AiStats.add("sniper_gave_up");
 			}
 			// Knocked off the tower.
 			brain.sniperPhase = 0;
@@ -260,6 +276,7 @@ final class MobSpecials {
 		if (dist < 10 || dist > 28 || !mob.hasLineOfSight(target) || brain.blocks < 6) {
 			return false;
 		}
+		com.mobsminecraft.debug.AiStats.add("sniper_tower");
 		brain.sniperPhase = 1;
 		brain.startTower(5 + mob.getRandom().nextInt(3));
 		return true;

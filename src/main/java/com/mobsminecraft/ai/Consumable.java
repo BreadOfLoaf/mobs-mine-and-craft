@@ -180,7 +180,8 @@ public enum Consumable {
 		for (Carried c : order) {
 			int cooldown = use(brain, c, level, mob, target, griefing);
 			if (cooldown > 0) {
-				brain.consumableCooldown = cooldown + r.nextInt(15);
+				brain.consumableCooldown = cooldown * 2 + r.nextInt(20);
+				com.mobsminecraft.debug.AiStats.add("use:" + c.type.name().toLowerCase());
 				// Consumables never run out; what a mob drops on death is decided separately.
 				mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 				return;

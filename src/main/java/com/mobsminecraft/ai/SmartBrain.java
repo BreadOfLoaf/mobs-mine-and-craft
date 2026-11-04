@@ -137,6 +137,7 @@ public final class SmartBrain {
 	List<BlockState> nestStates;
 	int nestIndex;
 	int sniperCooldown;
+	int sniperBlindTicks;
 	int punchCooldown;
 	int fletchTimer = -1;
 	int fletchTicks;
@@ -225,6 +226,17 @@ public final class SmartBrain {
 
 	public void dropInventory(ServerLevel level) {
 		Inventory.dropAll(this, level);
+	}
+
+	/** One-line summary of what the AI is busy with (for playtest reports). */
+	public String debugState() {
+		return String.format(java.util.Locale.ROOT,
+			"pick=%s stashed=%s mining=%s tower=%d dig=%d flee=%d climb=%d plan=%s sniper=%d wall=%s craft=%s rs=%s/%s job=%s dig=%s assist=%d reach=%s hand=%s",
+			this.pickaxe.getItem(), this.stashedHand == null ? "-" : this.stashedHand.getItem(), this.miningPos != null, this.towerRemaining, this.digRemaining, this.fleeTicks, this.climbTicks,
+			this.housePlan == null ? "-" : this.houseIndex + "/" + this.housePlan.size(), this.sniperPhase,
+			this.wallPlan == null ? "-" : this.wallIndex + "/" + this.wallPlan.size(), this.crafting,
+			this.rsPlan != null, this.rsButton != null, this.enchantTicks > 0 || this.fletchTicks > 0 || this.craftingTicks > 0,
+			this.digTarget, this.assistTicks, this.targetReachable, this.mob.getMainHandItem().getItem());
 	}
 
 	public boolean isBowEnchanted() {
@@ -466,6 +478,16 @@ public final class SmartBrain {
 		if (isValidTarget(t)) {
 			return t;
 		}
+		// Hostile mobs hunt players they can't see (hiding in a bunker, behind a wall) if they're close.
+		if (this.mob instanceof Enemy && this.mob.tickCount % 20 == 0 && !(this.mob instanceof net.minecraft.world.entity.monster.Enderman)) {
+			Player hidden = level.getNearestPlayer(this.mob.getX(), this.mob.getY(), this.mob.getZ(), 20.0,
+				EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(e -> e.isAlive()));
+			if (hidden != null && !this.mob.hasLineOfSight(hidden)) {
+				this.mob.setTarget(hidden);
+				com.mobsminecraft.debug.AiStats.add("hunt_hidden");
+				return hidden;
+			}
+		}
 		if (this.mob instanceof Villager) {
 			Player p = level.getNearestPlayer(this.mob.getX(), this.mob.getY(), this.mob.getZ(), 16.0,
 				EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(e -> e.isAlive()));
@@ -511,7 +533,14 @@ public final class SmartBrain {
 		}
 		this.lastPos = pos;
 
-		if (!this.targetReachable && (this.stuckTicks > 10 || this.mob.getNavigation().isDone())) {
+		// Take over when the path is impossible, or when the mob hasn't moved for 3 seconds even though
+		// vanilla thinks there's a path (e.g. swimming in a moat it can't climb out of).
+		boolean shooting = this.mob instanceof RangedAttackMob && this.mob.distanceTo(target) < 16.0F && this.mob.hasLineOfSight(target);
+		boolean stuckAnyway = this.stuckTicks > 60 && this.mob.distanceTo(target) > 2.5F && !shooting;
+		if ((!this.targetReachable && (this.stuckTicks > 10 || this.mob.getNavigation().isDone())) || stuckAnyway) {
+			if (stuckAnyway && this.assistTicks == 0) {
+				com.mobsminecraft.debug.AiStats.add("unstuck_assist");
+			}
 			this.assistTicks = 80;
 		}
 		if (this.assistTicks <= 0) {
@@ -535,7 +564,12 @@ public final class SmartBrain {
 			return;
 		}
 		if (dy < -2.5 && horiz < 1.5) {
-			this.startDig(1, false);
+			BlockPos below = this.mob.blockPosition().below();
+			if (BlockWork.canMine(this.mob, level, below, level.getBlockState(below))) {
+				this.startDig(1, false);
+			} else {
+				this.stepOffLedge(level);
+			}
 			return;
 		}
 		if (horiz < 1.0) {
@@ -584,6 +618,7 @@ public final class SmartBrain {
 					return false;
 				}
 				this.startMining(obstruction, true);
+				com.mobsminecraft.debug.AiStats.add("tunnel_mine");
 				return true;
 			}
 		} else if (!BlockWork.isFloor(level, next.below())) {
@@ -592,6 +627,9 @@ public final class SmartBrain {
 				drop++;
 			}
 			boolean safeDrop = dy < -1.0 && drop <= 3;
+			if (!safeDrop) {
+				com.mobsminecraft.debug.AiStats.add("bridge_block");
+			}
 			if (!safeDrop && !this.place(level, next.below(), this.buildState(), true)) {
 				return this.blocks > 0;
 			}
@@ -600,6 +638,25 @@ public final class SmartBrain {
 		this.mob.getNavigation().stop();
 		this.mob.getMoveControl().setWantedPosition(next.getX() + 0.5, wantY, next.getZ() + 0.5, this.walkSpeed());
 		return true;
+	}
+
+	/** Walks off the edge of whatever the mob is standing on, toward an open spot with ground within 4 blocks. */
+	private void stepOffLedge(ServerLevel level) {
+		BlockPos feet = this.mob.blockPosition();
+		for (Direction d : Direction.Plane.HORIZONTAL) {
+			BlockPos next = feet.relative(d);
+			if (BlockWork.blocksMovement(level, next) || BlockWork.blocksMovement(level, next.above())) {
+				continue;
+			}
+			for (int drop = 1; drop <= 4; drop++) {
+				if (BlockWork.isFloor(level, next.below(drop))) {
+					this.mob.getNavigation().stop();
+					this.mob.getMoveControl().setWantedPosition(next.getX() + 0.5, next.getY(), next.getZ() + 0.5, this.walkSpeed());
+					com.mobsminecraft.debug.AiStats.add("step_off_ledge");
+					return;
+				}
+			}
+		}
 	}
 
 	private int height() {
@@ -615,11 +672,17 @@ public final class SmartBrain {
 	private void startEscape(LivingEntity target) {
 		RandomSource r = this.mob.getRandom();
 		this.escapeCooldown = 400 + r.nextInt(200);
+		com.mobsminecraft.debug.AiStats.add("escape");
 		float roll = r.nextFloat();
 		if (roll < 0.4F) {
 			this.startTower(3 + r.nextInt(3));
 		} else if (roll < 0.65F) {
-			this.startDig(3, true);
+			BlockPos below = this.mob.blockPosition().below();
+			if (this.mob.level() instanceof ServerLevel sl && BlockWork.canMine(this.mob, sl, below, sl.getBlockState(below))) {
+				this.startDig(3, true);
+			} else {
+				this.startTower(3 + r.nextInt(3));
+			}
 		} else {
 			Vec3 away = this.mob.position().subtract(target.position()).multiply(1.0, 0.0, 1.0);
 			if (away.lengthSqr() < 1.0E-4) {
@@ -663,6 +726,7 @@ public final class SmartBrain {
 			return;
 		}
 		this.coverCooldown = 300 + r.nextInt(300);
+		com.mobsminecraft.debug.AiStats.add("cover_wall");
 		this.planWall(level, target, 2, 1 + r.nextInt(2), 2 + r.nextInt(2), this.buildState(), false);
 	}
 
@@ -718,6 +782,7 @@ public final class SmartBrain {
 	}
 
 	void startTower(int count) {
+		com.mobsminecraft.debug.AiStats.add("tower");
 		this.towerRemaining = Math.min(count, 8);
 		this.towerFeet = null;
 	}
@@ -764,6 +829,7 @@ public final class SmartBrain {
 
 	private void startDig(int count, boolean roof) {
 		this.digRemaining = count;
+		com.mobsminecraft.debug.AiStats.add("dig_down");
 		this.roofPending = false;
 		// The roof is placed once the last block is dug out and the mob has landed.
 		this.digRoofAfter = roof;
@@ -818,6 +884,7 @@ public final class SmartBrain {
 			return;
 		}
 		this.stashedHand = this.mob.getMainHandItem().copy();
+		com.mobsminecraft.debug.AiStats.add("pickaxe_out");
 		this.mob.setItemSlot(EquipmentSlot.MAINHAND, this.pickaxe);
 	}
 
@@ -856,6 +923,7 @@ public final class SmartBrain {
 			}
 			BlockPos broken = this.miningPos;
 			this.miningPos = null;
+			com.mobsminecraft.debug.AiStats.add(BlockWork.isOre(state) ? "ore_mined" : "block_mined");
 			this.restoreHand();
 			if (state.is(BlockTags.LOGS)) {
 				this.logsChopped++;
@@ -884,7 +952,11 @@ public final class SmartBrain {
 		}
 		// Mobs never run out of building blocks; the stock only decides how many they drop.
 		level.setBlock(pos, Block.updateFromNeighbourShapes(state, level, pos), Block.UPDATE_ALL);
-		MobBuilt.mark(level, pos);
+		if (!useStock) {
+			// Structures (houses, outposts, traps...) are protected; towers, bridges and walls are not.
+			MobBuilt.mark(level, pos);
+		}
+		com.mobsminecraft.debug.AiStats.add("block_placed");
 		level.playSound(null, pos, state.getSoundType().getPlaceSound(), SoundSource.HOSTILE, 1.0F, 0.8F);
 		if (state.getBlock() instanceof AbstractFurnaceBlock) {
 			Furnaces.load(level, pos, this.mob.getRandom());

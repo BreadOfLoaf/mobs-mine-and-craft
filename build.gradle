@@ -42,3 +42,27 @@ jar {
 		rename { "${it}_${inputs.properties.archivesName}" }
 	}
 }
+
+// Test-only playtest harness (bot player + scenarios). Loaded on the dev server, never in the release jar.
+sourceSets {
+	testmod {
+		compileClasspath += main.compileClasspath + main.output
+		runtimeClasspath += main.runtimeClasspath + main.output
+	}
+}
+
+loom {
+	runs {
+		server {
+			source sourceSets.testmod
+		}
+	}
+	mods {
+		mobsmineandcraft {
+			sourceSet sourceSets.main
+		}
+		mmctest {
+			sourceSet sourceSets.testmod
+		}
+	}
+}

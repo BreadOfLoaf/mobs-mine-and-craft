@@ -72,6 +72,7 @@ final class Traps {
 		}
 		if (brain.trapIndex >= brain.trapPlan.size()) {
 			brain.trapPlan = null;
+			com.mobsminecraft.debug.AiStats.add("tripwire_trap");
 			// Rest a minute or two, then build another one.
 			brain.trapCooldown = 1200 + mob.getRandom().nextInt(1200);
 		}

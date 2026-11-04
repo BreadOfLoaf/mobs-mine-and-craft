@@ -143,6 +143,7 @@ final class RedstoneTraps {
 	}
 
 	private static void start(SmartBrain brain, Kind kind, List<BlockPos> plan, List<BlockState> states, BlockPos button, Direction dir) {
+		com.mobsminecraft.debug.AiStats.add("rs_build:" + kind.name().toLowerCase());
 		brain.rsKind = kind;
 		brain.rsPlan = plan;
 		brain.rsStates = states;
@@ -217,6 +218,7 @@ final class RedstoneTraps {
 		level.playSound(null, brain.rsButton, SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.HOSTILE, 0.6F, 0.6F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		brain.rsPresses--;
+		com.mobsminecraft.debug.AiStats.add("rs_press");
 		brain.rsPressCooldown = 10;
 		return true;
 	}
@@ -227,6 +229,6 @@ final class RedstoneTraps {
 		Direction dir = brain.rsDir;
 		double ahead = (target.getX() - (dispenser.getX() + 0.5)) * dir.getStepX() + (target.getZ() - (dispenser.getZ() + 0.5)) * dir.getStepZ();
 		double across = Math.abs((target.getX() - (dispenser.getX() + 0.5)) * dir.getStepZ() - (target.getZ() - (dispenser.getZ() + 0.5)) * dir.getStepX());
-		return ahead > 1.0 && ahead < 20.0 && across < 1.5 && Math.abs(target.getY() - dispenser.getY()) < 2.0;
+		return ahead > 1.0 && ahead < 22.0 && across < 1.5 + ahead * 0.35 && Math.abs(target.getY() - dispenser.getY()) < 3.0;
 	}
 }

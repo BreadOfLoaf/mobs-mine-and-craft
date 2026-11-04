@@ -82,6 +82,7 @@ final class CombatCrafting {
 				case ANVILS -> brain.anvils += 2;
 			}
 			level.playSound(null, mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
+			com.mobsminecraft.debug.AiStats.add("craft:" + brain.crafting.name().toLowerCase());
 			brain.crafting = null;
 		}
 		return true;
@@ -107,6 +108,7 @@ final class CombatCrafting {
 		level.playSound(null, drop, SoundEvents.ANVIL_PLACE, SoundSource.HOSTILE, 0.6F, 1.0F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		brain.anvils--;
+		com.mobsminecraft.debug.AiStats.add("anvil_drop");
 	}
 
 	/** Highest spot 3-6 blocks up with open air all the way down to the player's column. */
@@ -155,6 +157,7 @@ final class CombatCrafting {
 		}
 		brain.climbTicks = 60;
 		brain.climbToward = wall;
+		com.mobsminecraft.debug.AiStats.add("ladder_climb");
 		return true;
 	}
 
