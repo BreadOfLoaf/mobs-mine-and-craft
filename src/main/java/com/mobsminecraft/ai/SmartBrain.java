@@ -74,6 +74,7 @@ public final class SmartBrain {
 	private int pathCheckCooldown;
 	boolean targetReachable = true;
 	private int assistTicks;
+	private int assistBackoff;
 	private Vec3 lastPos = Vec3.ZERO;
 	private int stuckTicks;
 
@@ -202,6 +203,73 @@ public final class SmartBrain {
 	int rsPressCooldown;
 	int rsOperateTicks;
 
+	// Shields (see Shields)
+	int shieldTicks;
+	int shieldRest;
+
+	// Retreat and heal, food (see Recovery)
+	int rawMeat;
+	int cookedMeat;
+	int meatType;
+	boolean recovering;
+	int recoverTicks;
+	int recoverCooldown;
+	Vec3 recoverGoal;
+	boolean recoverWalled;
+	BlockPos recoverFire;
+	int recoverCookTicks;
+	Mob healRequest;
+	LivingEntity recoverFrom;
+
+	// Tunnelling under the player (see Tunnel)
+	boolean tunneler;
+	int tunnelTicks;
+	int tunnelCooldown;
+	int tunnelY;
+	double tunnelSurface;
+	boolean tunnelReported;
+
+	// Staircases up to a towering player (see Stairs)
+	int stairTicks;
+	int stairCooldown;
+	int stairPhase;
+	int stairStepWait;
+	int stairTopY;
+	BlockPos stairStart;
+	BlockPos stairPillar;
+	Direction stairDir;
+	BlockPos stairNext;
+	boolean preferStairs;
+
+	// Enchanting gear at a table mid-fight (see CombatCrafting, Gear)
+	boolean enchanter;
+	boolean gearEnchanted;
+
+	// Passive farming (see Farming)
+	boolean farmer;
+	int farmCooldown;
+	List<BlockPos> farmPlan;
+	int farmIndex;
+	int farmTicks;
+	BlockPos farmWater;
+	Block farmCrop;
+
+	// Passive prospecting trips (see Prospecting)
+	int prospectCooldown;
+	int prospectPhase;
+	List<Prospecting.Op> prospectOps;
+	int prospectIndex;
+	int prospectTicks;
+	int prospectStuck;
+	BlockPos prospectStart;
+	Direction prospectDir;
+	BlockPos prospectFurnace;
+	Mob prospectLeader;
+	boolean forceProspect;
+
+	// Juggernaut fort: tries before it gives up on rough ground
+	private int castleTries;
+
 	// Creeper TNT waiting to be lit (see MobSpecials)
 	final List<BlockPos> unlitTnt = new ArrayList<>();
 	int tntLightTicks;
@@ -225,6 +293,12 @@ public final class SmartBrain {
 	}
 
 	public void dropInventory(ServerLevel level) {
+		if (Juggernaut.isJuggernaut(this.mob) && !this.pickaxe.isEmpty()) {
+			this.restoreHand();
+			this.mob.spawnAtLocation(level, Juggernaut.worn(this.pickaxe, this.mob.getRandom()));
+			this.pickaxe = ItemStack.EMPTY;
+		}
+		Juggernaut.dropGear(level, this.mob);
 		Inventory.dropAll(this, level);
 	}
 
@@ -240,7 +314,28 @@ public final class SmartBrain {
 	}
 
 	public boolean isBuilding() {
-		return this.housePlan != null || this.rsPlan != null || this.trapPlan != null;
+		return this.housePlan != null || this.rsPlan != null || this.trapPlan != null || this.prospectPhase != Prospecting.NONE || this.farmPlan != null;
+	}
+
+	/** Test hook: switch on one behaviour right away. */
+	public void debugForce(String what) {
+		if (!this.initialized) {
+			this.init();
+		}
+		RandomSource r = this.mob.getRandom();
+		switch (what) {
+			case "shield" -> Shields.give(this);
+			case "tunnel" -> { this.tunneler = true; this.tunnelCooldown = 0; this.engineer = false; this.combatCrafter = false; }
+			case "stairs" -> { this.preferStairs = true; this.ladders = 0; this.stairCooldown = 0; this.engineer = false; this.combatCrafter = false; }
+			case "ladders" -> { this.ladders = 16; this.engineer = false; this.combatCrafter = false; }
+			case "crafter" -> { this.combatCrafter = true; this.combatCraftCooldown = 0; this.enchanter = true; this.engineer = false; }
+			case "farmer" -> { this.farmer = true; this.farmCooldown = 0; }
+			case "prospector" -> { this.prospectCooldown = 0; this.forceProspect = true; }
+			case "hurt" -> { this.mob.setHealth(this.mob.getMaxHealth() * 0.3F); this.rawMeat = 2; this.cookedMeat = 1; this.recoverCooldown = 0; }
+			case "juggernaut" -> { Juggernaut.make(this.mob, r); this.pickaxe = Juggernaut.pickaxe(this.mob, r); this.castleBuilder = true; this.houseBuilder = false; this.houseBuilt = false;
+				if (this.mob instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) this.bowEnchanted = true; }
+			default -> {}
+		}
 	}
 
 	/** Fraction of the current build placed, or -1 if not building a house/outpost. */
@@ -286,9 +381,19 @@ public final class SmartBrain {
 		this.gatherCooldown = 100 + r.nextInt(300);
 		this.houseBuilder = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.isPassive() ? 0.12F : 0.04F);
 		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
-		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.4F;
+		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.5F;
+		// A few crafters also know how to enchant (skeletons have their own bow enchanting).
+		this.enchanter = this.combatCrafter && Juggernaut.canWearArmor(this.mob) && r.nextFloat() < 0.12F;
+		this.tunneler = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.25F;
+		this.tunnelCooldown = 100 + r.nextInt(300);
+		if (this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.25F) {
+			this.ladders = 8 + r.nextInt(9);
+		}
+		this.farmer = this.isPassive() && BlockWork.canBuild(this.mob) && r.nextFloat() < (this.mob instanceof Villager ? 0.4F : 0.2F);
+		this.farmCooldown = 200 + r.nextInt(1200);
+		this.prospectCooldown = 600 + r.nextInt(3000);
 		this.combatCraftCooldown = 200 + r.nextInt(400);
-		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.35F;
+		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.45F;
 		this.engineer = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
 		this.rsCooldown = 100 + r.nextInt(300);
 		this.outpostCooldown = 200 + r.nextInt(600);
@@ -311,11 +416,18 @@ public final class SmartBrain {
 			float t = r.nextFloat();
 			this.pickaxe = new ItemStack(t < 0.1F ? Items.WOODEN_PICKAXE : t < 0.6F ? Items.STONE_PICKAXE : t < 0.95F ? Items.IRON_PICKAXE : Items.DIAMOND_PICKAXE);
 		}
-		if (Juggernaut.isJuggernaut(this.mob) && r.nextFloat() < 0.6F) {
+		if (Juggernaut.isJuggernaut(this.mob)) {
+			this.pickaxe = Juggernaut.pickaxe(this.mob, r);
+			// Juggernauts always build their fort, the moment they spot a player.
 			this.castleBuilder = true;
 			this.houseBuilder = false;
+			if (this.mob instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) {
+				this.bowEnchanted = true;
+			}
 		}
 		Consumable.assign(this, r);
+		Recovery.assign(this, r);
+		Shields.assign(this, r);
 		MobSpecials.init(this, r);
 	}
 
@@ -337,10 +449,18 @@ public final class SmartBrain {
 		LivingEntity target = this.resolveTarget(level);
 		boolean canBuild = griefing && BlockWork.canBuild(this.mob) && !this.mob.isPassenger();
 
+		// A Juggernaut that spots a player builds its fort first, ignoring the player until it's done.
+		if (canBuild && this.castleBuilder && !this.houseBuilt && (target != null || this.housePlan != null) && this.tickFortFirst(level)) {
+			return;
+		}
+
 		if (target != null) {
-			Support.tick(this, level, target);
 			Consumable.tryUse(this, level, target, griefing);
 			MobSpecials.combat(this, level, target, griefing);
+		}
+		Shields.tick(this, level, target);
+		if (this.supporter && (target != null || this.mob.tickCount % 10 == 0)) {
+			Support.tick(this, level, target);
 		}
 
 		boolean freeTime = target == null || this.mob.distanceTo(target) > 12.0F;
@@ -364,6 +484,14 @@ public final class SmartBrain {
 		if (this.miningPos != null) {
 			this.tickMining(level);
 			return;
+		}
+		if (this.recovering) {
+			if (Recovery.tick(this, level, griefing)) {
+				if (this.wallPlan != null) {
+					this.tickWall(level);
+				}
+				return;
+			}
 		}
 		if (this.roofPending && this.mob.onGround()) {
 			this.roofPending = false;
@@ -397,8 +525,14 @@ public final class SmartBrain {
 
 		if (target != null) {
 			float hp = this.mob.getHealth() / this.mob.getMaxHealth();
+			if (Recovery.tryStart(this, level, target)) {
+				return;
+			}
 			if (hp < 0.3F && this.escapeCooldown == 0) {
 				this.startEscape(target);
+				return;
+			}
+			if (Stairs.tick(this, level, target)) {
 				return;
 			}
 			// A builder stays on its build; in a group of builders, one keeps building and the rest fight.
@@ -415,6 +549,9 @@ public final class SmartBrain {
 				return;
 			}
 			CombatCrafting.dropAnvil(this, level, target);
+			if (Tunnel.tick(this, level, target, griefing)) {
+				return;
+			}
 			if (this.gardener && Gardening.tryTreeTrap(this, level, target)) {
 				return;
 			}
@@ -429,6 +566,10 @@ public final class SmartBrain {
 		}
 
 		if (this.housePlan != null && this.tickBlueprint(level)) {
+			return;
+		}
+		Recovery.snack(this, level);
+		if (this.isPassive() && Prospecting.tick(this, level, griefing)) {
 			return;
 		}
 		if (this.tickCastleGuard()) {
@@ -456,7 +597,10 @@ public final class SmartBrain {
 		if (this.tickBlueprint(level)) {
 			return;
 		}
-		if (this.isPassive() && Furnaces.tickCooking(this, level, griefing)) {
+		if (this.isPassive() && Farming.tick(this, level, griefing)) {
+			return;
+		}
+		if ((this.isPassive() || this.rawMeat > 0) && Furnaces.tickCooking(this, level, griefing)) {
 			return;
 		}
 		if (this.gardener && Gardening.tryPlant(this, level)) {
@@ -491,6 +635,11 @@ public final class SmartBrain {
 		if (this.gardenCooldown > 0) this.gardenCooldown--;
 		if (this.treeTrapCooldown > 0) this.treeTrapCooldown--;
 		if (this.sniperCooldown > 0) this.sniperCooldown--;
+		if (this.recoverCooldown > 0) this.recoverCooldown--;
+		if (this.tunnelCooldown > 0) this.tunnelCooldown--;
+		if (this.stairCooldown > 0) this.stairCooldown--;
+		if (this.farmCooldown > 0) this.farmCooldown--;
+		if (this.prospectCooldown > 0) this.prospectCooldown--;
 		if (++this.regenTicks >= 200) {
 			this.regenTicks = 0;
 			if (this.blocks < 64) this.blocks++;
@@ -570,6 +719,11 @@ public final class SmartBrain {
 		// vanilla thinks there's a path (e.g. swimming in a moat it can't climb out of).
 		boolean shooting = this.mob instanceof RangedAttackMob && this.mob.distanceTo(target) < 16.0F && this.mob.hasLineOfSight(target);
 		boolean stuckAnyway = this.stuckTicks > 60 && this.mob.distanceTo(target) > 2.5F && !shooting;
+		if (this.assistBackoff > 0) {
+			// The last straight-line attempt was blocked: give vanilla pathing a moment before trying again.
+			this.assistBackoff--;
+			return;
+		}
 		if ((!this.targetReachable && (this.stuckTicks >= 20 || this.mob.getNavigation().isDone())) || stuckAnyway) {
 			if (stuckAnyway && this.assistTicks == 0) {
 				com.mobsminecraft.debug.AiStats.add("unstuck_assist");
@@ -589,7 +743,15 @@ public final class SmartBrain {
 		double dy = target.getY() - this.mob.getY();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 
-		if (CombatCrafting.tryLadders(this, level, dx, dy, dz, horiz)) {
+		if (!this.preferStairs && CombatCrafting.tryLadders(this, level, dx, dy, dz, horiz)) {
+			return;
+		}
+		// Carrying ladders and the player is up a wall or pillar nearby: walk right up to it to ladder it.
+		if (!this.preferStairs && this.ladders > 0 && dy > 2.5 && horiz >= 1.2 && horiz < 7.0 && this.stepToward(level, target.position())) {
+			return;
+		}
+		// A player towering up: build a staircase up to them (or tower up beside them).
+		if (dy > 2.5 && horiz < 6.0 && (this.preferStairs || this.mob.getRandom().nextFloat() < 0.6F) && Stairs.tryStart(this, level, target, dy)) {
 			return;
 		}
 		if (dy > 1.5 && horiz < 2.5) {
@@ -610,6 +772,7 @@ public final class SmartBrain {
 		}
 		if (!this.stepToward(level, target.position())) {
 			this.assistTicks = 0;
+			this.assistBackoff = 40;
 		}
 	}
 
@@ -617,7 +780,7 @@ public final class SmartBrain {
 	 * Walks one block straight toward the goal, mining through anything in the way and bridging gaps.
 	 * Returns false if the way is blocked by something unbreakable.
 	 */
-	private boolean stepToward(ServerLevel level, Vec3 goal) {
+	boolean stepToward(ServerLevel level, Vec3 goal) {
 		double dx = goal.x - this.mob.getX();
 		double dz = goal.z - this.mob.getZ();
 		double dy = goal.y - this.mob.getY();
@@ -692,8 +855,16 @@ public final class SmartBrain {
 		}
 	}
 
-	private int height() {
+	int height() {
 		return Math.max(1, Mth.ceil(this.mob.getBbHeight()));
+	}
+
+	/** Walks to a spot, re-pathing only when something else (a vanilla goal) changed the path. */
+	void walkTo(Vec3 goal, double speed) {
+		Path path = this.mob.getNavigation().getPath();
+		if (path == null || path.isDone() || path.getTarget().distToCenterSqr(goal) > 4.0) {
+			this.mob.getNavigation().moveTo(goal.x, goal.y, goal.z, speed);
+		}
 	}
 
 	void holdStill() {
@@ -947,7 +1118,16 @@ public final class SmartBrain {
 		if (this.miningProgress >= 1.0F) {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, -1);
 			boolean absorb = this.miningAbsorb && BlockWork.isBuildingMaterial(state);
-			level.destroyBlock(this.miningPos, !absorb, this.mob);
+			if (!absorb) {
+				// Drops come from the tool actually used (a stashed pickaxe, or a passive mob's stand-in one), not the empty hand.
+				// They go straight into the miner's inventory; anything that doesn't fit drops.
+				for (ItemStack drop : Block.getDrops(state, level, this.miningPos, level.getBlockEntity(this.miningPos), this.mob, BlockWork.tool(this.mob, state))) {
+					if (!Inventory.store(this, drop)) {
+						Block.popResource(level, this.miningPos, drop);
+					}
+				}
+			}
+			level.destroyBlock(this.miningPos, false, this.mob);
 			if (absorb) {
 				this.blocks = Math.min(this.blocks + (state.is(BlockTags.LOGS) ? 4 : 1), MAX_STOCK);
 			} else {
@@ -1105,6 +1285,37 @@ public final class SmartBrain {
 	}
 
 	// ------------------------------------------------------------------ makeshift houses
+
+	/** Plans the Juggernaut's fort right where it is, then builds it, ignoring the player. Returns true while busy. */
+	private boolean tickFortFirst(ServerLevel level) {
+		if (this.housePlan == null) {
+			if (!this.mob.onGround() || this.mob.tickCount % 20 != 0) {
+				return this.castleTries < 10;
+			}
+			Castle.plan(this, level);
+			if (this.housePlan == null) {
+				if (++this.castleTries >= 10) {
+					com.mobsminecraft.debug.AiStats.add("fort_no_room");
+					this.houseBuilt = true;
+					return false;
+				}
+				return true;
+			}
+			com.mobsminecraft.debug.AiStats.add("fort_started");
+		}
+		// Ignore the player while building.
+		if (this.mob.getTarget() != null) {
+			this.mob.setTarget(null);
+		}
+		if (this.mob.isUsingItem()) {
+			this.mob.stopUsingItem();
+		}
+		boolean busy = this.tickBlueprint(level);
+		if (this.houseBuilt) {
+			com.mobsminecraft.debug.AiStats.add("fort_finished");
+		}
+		return busy || this.housePlan != null;
+	}
 
 	/** Juggernauts stay near the castle they built. */
 	private boolean tickCastleGuard() {

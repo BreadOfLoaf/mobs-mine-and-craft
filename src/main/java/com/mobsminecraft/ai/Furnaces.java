@@ -88,12 +88,13 @@ final class Furnaces {
 	 */
 	static boolean tickCooking(SmartBrain brain, ServerLevel level, boolean griefing) {
 		Mob mob = brain.mob;
+		boolean hostile = !brain.isPassive();
 		if (brain.cookPos == null) {
-			if (brain.cookCooldown > 0 || !griefing || !mob.onGround()) {
+			if (brain.cookCooldown > 0 || !griefing || !mob.onGround() || (hostile && brain.rawMeat <= 0)) {
 				return false;
 			}
 			RandomSource r = mob.getRandom();
-			brain.cookCooldown = 1200 + r.nextInt(1800);
+			brain.cookCooldown = hostile ? 300 + r.nextInt(600) : 1200 + r.nextInt(1800);
 			BlockPos furnace = BlockWork.findNearest(level, mob.blockPosition(), 12, s -> s.getBlock() instanceof AbstractFurnaceBlock);
 			if (furnace == null) {
 				furnace = brain.placeAdjacent(level, Blocks.FURNACE.defaultBlockState()
@@ -102,7 +103,18 @@ final class Furnaces {
 			if (furnace == null) {
 				return false;
 			}
-			load(level, furnace, new ItemStack(MEAT[r.nextInt(MEAT.length)]), r);
+			if (hostile) {
+				// Hostile mobs smelt the raw meat they carry, to heal with later.
+				if (level.getBlockEntity(furnace) instanceof AbstractFurnaceBlockEntity fb
+					&& (fb.getItem(SLOT_INPUT).isEmpty() || com.mobsminecraft.world.MobBuilt.contains(level, furnace))) {
+					fb.setItem(SLOT_INPUT, new ItemStack(Recovery.RAW_MEAT[brain.meatType], brain.rawMeat));
+					brain.rawMeat = 0;
+				}
+				load(level, furnace, ItemStack.EMPTY, r);
+				com.mobsminecraft.debug.AiStats.add("smelt_meat_start");
+			} else {
+				load(level, furnace, new ItemStack(MEAT[r.nextInt(MEAT.length)]), r);
+			}
 			brain.cookPos = furnace;
 			brain.cookTicks = 0;
 			return true;
@@ -129,6 +141,22 @@ final class Furnaces {
 			furnace.setItem(SLOT_RESULT, ItemStack.EMPTY);
 			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			level.playSound(null, mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.NEUTRAL, 0.6F, 1.0F);
+			if (hostile && !Recovery.isCookedMeat(result)) {
+				Inventory.store(brain, result);
+				return true;
+			}
+			if (hostile) {
+				brain.cookedMeat += result.getCount();
+				// Take back whatever is still raw.
+				ItemStack rest = furnace.getItem(SLOT_INPUT);
+				if (Recovery.isRawMeat(rest)) {
+					brain.rawMeat += rest.getCount();
+					furnace.setItem(SLOT_INPUT, ItemStack.EMPTY);
+				}
+				com.mobsminecraft.debug.AiStats.add("smelt_meat_done");
+				brain.cookPos = null;
+				return false;
+			}
 			if (mob.getHealth() < mob.getMaxHealth()) {
 				mob.heal(4.0F);
 				level.playSound(null, mob.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.NEUTRAL, 0.8F, 1.0F);

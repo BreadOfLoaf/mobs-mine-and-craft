@@ -41,12 +41,21 @@ final class Juggernaut {
 		if (r.nextFloat() >= CHANCE) {
 			return;
 		}
-		equip(mob, EquipmentSlot.HEAD, Items.DIAMOND_HELMET);
-		equip(mob, EquipmentSlot.CHEST, Items.DIAMOND_CHESTPLATE);
-		equip(mob, EquipmentSlot.LEGS, Items.DIAMOND_LEGGINGS);
-		equip(mob, EquipmentSlot.FEET, Items.DIAMOND_BOOTS);
-		// Skeletons switch to melee automatically when given a sword.
-		equip(mob, EquipmentSlot.MAINHAND, Items.DIAMOND_SWORD);
+		make(mob, r);
+	}
+
+	/** Turns the mob into a Juggernaut: enchanted diamond gear, extra health and knockback resistance. */
+	static void make(Mob mob, RandomSource r) {
+		if (!canWearArmor(mob) || isJuggernaut(mob)) {
+			return;
+		}
+		mob.addTag(ROLLED_TAG);
+		equip(mob, r, EquipmentSlot.HEAD, Items.DIAMOND_HELMET);
+		equip(mob, r, EquipmentSlot.CHEST, Items.DIAMOND_CHESTPLATE);
+		equip(mob, r, EquipmentSlot.LEGS, Items.DIAMOND_LEGGINGS);
+		equip(mob, r, EquipmentSlot.FEET, Items.DIAMOND_BOOTS);
+		// Skeleton Juggernauts keep a (heavily enchanted) bow; everyone else gets a diamond sword.
+		equip(mob, r, EquipmentSlot.MAINHAND, mob instanceof AbstractSkeleton ? Items.BOW : Items.DIAMOND_SWORD);
 
 		AttributeInstance health = mob.getAttribute(Attributes.MAX_HEALTH);
 		if (health != null && !health.hasModifier(HEALTH_BONUS)) {
@@ -59,8 +68,48 @@ final class Juggernaut {
 		mob.setHealth(mob.getMaxHealth());
 	}
 
-	private static void equip(Mob mob, EquipmentSlot slot, net.minecraft.world.item.Item item) {
-		mob.setItemSlot(slot, new ItemStack(item));
-		mob.setDropChance(slot, 0.05F);
+	/** Enchanted gear. It never drops the vanilla way: on death it all drops, worn down (see {@link #dropGear}). */
+	private static void equip(Mob mob, RandomSource r, EquipmentSlot slot, net.minecraft.world.item.Item item) {
+		ItemStack stack = new ItemStack(item);
+		if (mob.level() instanceof net.minecraft.server.level.ServerLevel level) {
+			stack = net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, stack, 25 + r.nextInt(16), level.registryAccess(), java.util.Optional.empty());
+		}
+		mob.setItemSlot(slot, stack);
+		mob.setDropChance(slot, 0.0F);
+	}
+
+	/** A copy of the item worn down to 15-60% durability. */
+	static ItemStack worn(ItemStack stack, RandomSource r) {
+		ItemStack drop = stack.copy();
+		if (drop.isDamageableItem()) {
+			int max = drop.getMaxDamage();
+			drop.setDamageValue(Math.max(drop.getDamageValue(), (int) (max * (0.4F + r.nextFloat() * 0.45F))));
+		}
+		return drop;
+	}
+
+	/** Juggernauts mine with an enchanted diamond pickaxe. */
+	static ItemStack pickaxe(Mob mob, RandomSource r) {
+		ItemStack pick = new ItemStack(Items.DIAMOND_PICKAXE);
+		if (mob.level() instanceof net.minecraft.server.level.ServerLevel level) {
+			pick = net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, pick, 20 + r.nextInt(16), level.registryAccess(), java.util.Optional.empty());
+		}
+		return pick;
+	}
+
+	/** A dead Juggernaut drops every piece of its gear, damaged from the fight. */
+	static void dropGear(net.minecraft.server.level.ServerLevel level, Mob mob) {
+		if (!isJuggernaut(mob)) {
+			return;
+		}
+		RandomSource r = mob.getRandom();
+		for (EquipmentSlot slot : new EquipmentSlot[] {EquipmentSlot.MAINHAND, EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+			ItemStack stack = mob.getItemBySlot(slot);
+			if (stack.isEmpty() || mob.getDropChances().byEquipment(slot) > 0.0F) {
+				continue;
+			}
+			mob.spawnAtLocation(level, worn(stack, r));
+			mob.setItemSlot(slot, ItemStack.EMPTY);
+		}
 	}
 }

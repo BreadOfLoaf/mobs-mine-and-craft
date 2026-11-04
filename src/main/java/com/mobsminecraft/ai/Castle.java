@@ -23,10 +23,18 @@ final class Castle {
 		BlockPos c = brain.mob.blockPosition();
 		RandomSource r = brain.mob.getRandom();
 		// Size and material vary from castle to castle.
-		int radius = 3 + r.nextInt(4);
 		int wallHeight = 3 + r.nextInt(3);
 		BlockState wall = wallBlock(r);
+		// Try the size it wants first, then smaller forts if the ground is too rough.
+		for (int radius = 3 + r.nextInt(4); radius >= 3; radius--) {
+			if (fits(level, c, radius, wallHeight)) {
+				plan(brain, c, r, radius, wallHeight, wall);
+				return;
+			}
+		}
+	}
 
+	private static boolean fits(ServerLevel level, BlockPos c, int radius, int wallHeight) {
 		int bad = 0;
 		for (int x = -radius; x <= radius; x++) {
 			for (int z = -radius; z <= radius; z++) {
@@ -43,9 +51,11 @@ final class Castle {
 				}
 			}
 		}
-		if (bad > 20) {
-			return;
-		}
+		return bad <= 8 * radius * wallHeight / 5;
+	}
+
+	private static void plan(SmartBrain brain, BlockPos c, RandomSource r, int radius, int wallHeight, BlockState wall) {
+		ServerLevel level = (ServerLevel) brain.mob.level();
 
 		Direction gate = Direction.Plane.HORIZONTAL.getRandomDirection(r);
 		Direction back = gate.getOpposite();
@@ -115,7 +125,7 @@ final class Castle {
 		brain.houseStates = states;
 		brain.houseIndex = 0;
 		brain.houseCenter = c;
-		brain.buildInterval = 3;
+		brain.buildInterval = 2;
 	}
 
 	private static boolean isPerimeter(int x, int z, int radius) {

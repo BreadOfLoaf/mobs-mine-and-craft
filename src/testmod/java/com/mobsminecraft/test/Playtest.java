@@ -100,6 +100,38 @@ public class Playtest implements ModInitializer {
 		}, mobs("cow", 6, "sheep", 4, "villager", 4, "pig", 2), 14, Behaviour.SPECTATE));
 		add(new Scenario("trap_test", 1200, "Three engineer zombies build redstone traps against a standing bot. Do the traps hit?", (run, o) -> {},
 			mobs("zombie", 3), 9, Behaviour.STAND));
+		add(new Scenario("shields", 1200, "Bot fights 5 shield-carrying zombies with an iron sword.", (run, o) -> {},
+			mobs("zombie", 5), 8, Behaviour.FIGHT));
+		add(new Scenario("retreat", 1200, "Bot fights hurt zombies (30% health, carrying meat) alongside two skeletons.", (run, o) -> {},
+			mobs("zombie", 5, "skeleton", 2), 8, Behaviour.FIGHT));
+		add(new Scenario("tunnel", 1200, "Bot stands inside an obsidian ring; tunneller zombies dig under it.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 123 %d minecraft:obsidian hollow", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+			run.cmd("fill %d 123 %d %d 123 %d minecraft:obsidian", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+		}, mobs("zombie", 4), 9, Behaviour.STAND));
+		add(new Scenario("stairs", 1200, "Bot on top of a 7-high obsidian pillar; zombies build staircases up.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 127 %d minecraft:obsidian", o.getX(), o.getZ(), o.getX(), o.getZ());
+			run.botStart = Vec3.atBottomCenterOf(o.above(8));
+		}, mobs("zombie", 4), 10, Behaviour.STAND));
+		add(new Scenario("ladders", 1200, "Bot on top of a 7-high obsidian pillar; zombies with ladders climb it.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 127 %d minecraft:obsidian", o.getX(), o.getZ(), o.getX(), o.getZ());
+			run.botStart = Vec3.atBottomCenterOf(o.above(8));
+		}, mobs("zombie", 4), 10, Behaviour.STAND));
+		add(new Scenario("gear", 1500, "Bot in a sealed obsidian box; crafter zombies and skeletons power up with gear and enchantments.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:obsidian hollow", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+		}, mobs("zombie", 4, "skeleton", 2), 12, Behaviour.STAND));
+		add(new Scenario("juggernaut", 1800, "Two Juggernauts (zombie, skeleton) spot the bot: forts first, then fight.", (run, o) -> {},
+			mobs("zombie", 1, "skeleton", 1), 12, Behaviour.STAND));
+		add(new Scenario("farm", 2400, "Farmer villagers and cows near a pond (and away from it).", (run, o) -> {
+			run.cmd("fill %d 120 %d %d 120 %d minecraft:water", o.getX() - 1, o.getZ() - 1, o.getX() + 1, o.getZ());
+		}, mobs("villager", 4, "cow", 2), -10, Behaviour.SPECTATE));
+		add(new Scenario("prospect", 3000, "Passive mobs go on a prospecting trip into ore-rich ground and smelt what they find.", (run, o) -> {
+			java.util.Random rnd = new java.util.Random(o.getX());
+			for (int i = 0; i < 260; i++) {
+				run.cmd("setblock %d %d %d minecraft:%s", o.getX() - 20 + rnd.nextInt(41), 112 + rnd.nextInt(7), o.getZ() - 20 + rnd.nextInt(41),
+					rnd.nextInt(3) == 0 ? "coal_ore" : rnd.nextBoolean() ? "iron_ore" : "copper_ore");
+			}
+		}, mobs("villager", 2, "cow", 2, "sheep", 1), 3, Behaviour.SPECTATE));
+		add(new Scenario("prospect_solo", 1200, "One cow goes prospecting.", (run, o) -> {}, mobs("cow", 1), 3, Behaviour.SPECTATE));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -234,6 +266,7 @@ public class Playtest implements ModInitializer {
 		final BlockPos origin;
 		Vec3 botStart;
 		Bot bot;
+		final String runTag = "pt" + Long.toHexString(System.nanoTime());
 		private final List<Tracked> tracked = new ArrayList<>();
 		private final Map<String, Double> damageBy = new HashMap<>();
 		private double damage;
@@ -287,6 +320,15 @@ public class Playtest implements ModInitializer {
 				this.bot.hold(new ItemStack(Items.IRON_SWORD));
 			}
 
+			AiStats.reset();
+			cmd("tick sprint %d", this.scenario.ticks());
+		}
+
+		/** Spawns the mobs once the arena's chunks (and their entity storage) have loaded. */
+		private void spawnMobs() {
+			int x = this.origin.getX();
+			int z = this.origin.getZ();
+			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, (this.scenario.bot() == Behaviour.KITE ? 80 : 40) + 40);
 			int n = 0;
 			int total = this.scenario.mobs().values().stream().mapToInt(Integer::intValue).sum();
 			for (Map.Entry<String, Integer> e : this.scenario.mobs().entrySet()) {
@@ -305,11 +347,10 @@ public class Playtest implements ModInitializer {
 					n++;
 				}
 			}
-			for (Mob mob : this.level.getEntitiesOfClass(Mob.class, new AABB(this.origin).inflate(45), m -> m.entityTags().contains("playtest"))) {
+			for (Mob mob : this.level.getEntitiesOfClass(Mob.class, new AABB(this.origin).inflate(45), m -> m.entityTags().contains(this.runTag))) {
 				this.tracked.add(new Tracked(mob));
 			}
 			AiStats.reset();
-			cmd("tick sprint %d", this.scenario.ticks());
 			LOG.info("[playtest] run {}: {} with {} mobs", this.index, this.scenario.name(), this.tracked.size());
 		}
 
@@ -323,12 +364,16 @@ public class Playtest implements ModInitializer {
 			mob.finalizeSpawn(this.level, this.level.getCurrentDifficultyAt(mob.blockPosition()), net.minecraft.world.entity.EntitySpawnReason.COMMAND, null);
 			mob.setPersistenceRequired();
 			mob.addTag("playtest");
+			mob.addTag(this.runTag);
 			this.level.addFreshEntityWithPassengers(mob);
 		}
 
 		/** Advances one tick. Returns true when the run is over. */
 		boolean tick() {
 			this.ticks++;
+			if (this.ticks == 10) {
+				this.spawnMobs();
+			}
 			switch (this.scenario.bot()) {
 				case KITE -> {
 					if (this.ticks < 600) {
@@ -345,6 +390,9 @@ public class Playtest implements ModInitializer {
 							}
 						}
 						if (nearest != null) {
+							if (nearest.isBlocking()) {
+								AiStats.add("bot_hit_blocked");
+							}
 							this.bot.attack(nearest);
 							if (!nearest.isAlive()) {
 								this.kills++;
@@ -356,14 +404,54 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			this.bot.tick();
-			if (this.ticks == 5 && this.scenario.name().equals("trap_test")) {
+			if (this.ticks == 15 && this.scenario.name().equals("trap_test")) {
 				for (Tracked t : this.tracked) {
 					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugMakeEngineer();
 				}
 			}
-			if (this.ticks == 20 && this.scenario.name().equals("house_build")) {
+			if (this.ticks == 15) {
+				String force = switch (this.scenario.name()) {
+					case "shields" -> "shield";
+					case "tunnel" -> "tunnel";
+					case "stairs" -> "stairs";
+					case "ladders" -> "ladders";
+					case "gear" -> "crafter";
+					case "juggernaut" -> "juggernaut";
+					case "farm" -> "farmer";
+					default -> null;
+				};
+				for (Tracked t : this.tracked) {
+					var brain = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain();
+					if (force != null) {
+						brain.debugForce(force);
+					}
+					if (this.scenario.name().equals("retreat") && t.type.equals("zombie")) {
+						brain.debugForce("hurt");
+					}
+				}
+				if (this.scenario.name().startsWith("prospect") && !this.tracked.isEmpty()) {
+					((com.mobsminecraft.SmartMobHolder) this.tracked.get(0).mob).mmc$getBrain().debugForce("prospector");
+				}
+			}
+			if (this.ticks == 30 && this.scenario.name().equals("house_build")) {
 				for (Tracked t : this.tracked) {
 					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);
+				}
+			}
+			if (this.scenario.name().equals("juggernaut") && this.ticks == this.scenario.ticks() - 30) {
+				for (Tracked t : this.tracked) {
+					if (t.mob.isAlive()) {
+						t.mob.hurtServer(this.level, this.level.damageSources().genericKill(), 10000.0F);
+					}
+				}
+			}
+			if (this.scenario.name().equals("juggernaut") && this.ticks == this.scenario.ticks() - 5) {
+				for (net.minecraft.world.entity.item.ItemEntity item : this.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new AABB(this.origin).inflate(45))) {
+					ItemStack st = item.getItem();
+					if (st.isDamageableItem()) {
+						AiStats.add(String.format(Locale.ROOT, "drop:%s%s:%d%%", BuiltInRegistries.ITEM.getKey(st.getItem()).getPath(), st.isEnchanted() ? "*" : "",
+							100 - st.getDamageValue() * 100 / st.getMaxDamage()));
+					}
 				}
 			}
 			if (this.ticks % 10 == 0) {
@@ -461,6 +549,18 @@ public class Playtest implements ModInitializer {
 					sb.append(String.format(Locale.ROOT, "  builder %-9s alive=%s building=%s  [%s]%n", t.type, t.mob.isAlive(),
 						prog < 0 ? "no" : String.format(Locale.ROOT, "%.0f%%", prog * 100),
 						((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugState()));
+				}
+			}
+			if (this.scenario.name().equals("gear") || this.scenario.name().equals("juggernaut") || this.scenario.name().equals("shields")) {
+				for (Tracked t : this.tracked) {
+					StringBuilder eq = new StringBuilder();
+					for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+						ItemStack st = t.mob.getItemBySlot(slot);
+						if (!st.isEmpty()) {
+							eq.append(BuiltInRegistries.ITEM.getKey(st.getItem()).getPath()).append(st.isEnchanted() ? "*" : "").append(' ');
+						}
+					}
+					sb.append(String.format(Locale.ROOT, "  gear %-9s alive=%s %s%n", t.type, t.mob.isAlive(), eq));
 				}
 			}
 			sb.append("AI actions: ").append(stats.isEmpty() ? "none" : stats.toString()).append('\n');

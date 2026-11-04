@@ -13,6 +13,10 @@ public final class AiStats {
 		COUNTS.merge(key, 1, Integer::sum);
 	}
 
+	public static void add(String key, int amount) {
+		COUNTS.merge(key, amount, Integer::sum);
+	}
+
 	public static Map<String, Integer> snapshot() {
 		return new TreeMap<>(COUNTS);
 	}

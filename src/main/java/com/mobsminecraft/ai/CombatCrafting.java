@@ -23,7 +23,7 @@ import net.minecraft.world.phys.Vec3;
  * ladders to climb the player's walls, lava or water buckets, or anvils to drop on the player.
  */
 final class CombatCrafting {
-	enum Craft { LADDERS, LAVA_BUCKET, WATER_BUCKET, ANVILS }
+	enum Craft { LADDERS, LAVA_BUCKET, WATER_BUCKET, ANVILS, GEAR, ENCHANT }
 
 	private static final int CRAFT_TICKS = 40;
 
@@ -41,18 +41,31 @@ final class CombatCrafting {
 				return false;
 			}
 			RandomSource r = mob.getRandom();
-			brain.combatCraftCooldown = 600 + r.nextInt(600);
+			brain.combatCraftCooldown = 250 + r.nextInt(350);
 			boolean playerAbove = target.getY() - mob.getY() > 2.5;
 			if (playerAbove && brain.ladders == 0) {
 				brain.crafting = Craft.LADDERS;
+			} else if (brain.enchanter && !brain.gearEnchanted && Gear.hasEnchantable(mob) && r.nextFloat() < 0.5F) {
+				brain.crafting = Craft.ENCHANT;
+			} else if (Gear.hasUpgrade(mob) && r.nextFloat() < 0.65F) {
+				// Powering up: each session upgrades one piece of armour or the weapon.
+				brain.crafting = Craft.GEAR;
 			} else {
 				int roll = r.nextInt(100);
-				brain.crafting = roll < 45 ? Craft.ANVILS : roll < 52 ? Craft.LAVA_BUCKET : roll < 75 ? Craft.WATER_BUCKET : Craft.LADDERS;
+				brain.crafting = roll < 40 ? Craft.ANVILS : roll < 46 ? Craft.LAVA_BUCKET : roll < 64 ? Craft.WATER_BUCKET : Craft.LADDERS;
 			}
 			brain.craftTicks = 0;
-			brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.CRAFTING_TABLE));
-			if (brain.craftTable == null) {
-				brain.craftTable = brain.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
+			if (brain.crafting == Craft.ENCHANT) {
+				brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.ENCHANTING_TABLE));
+				if (brain.craftTable == null) {
+					brain.craftTable = brain.placeAdjacent(level, Blocks.ENCHANTING_TABLE.defaultBlockState());
+					placeBookshelves(brain, level, brain.craftTable, r);
+				}
+			} else {
+				brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.CRAFTING_TABLE));
+				if (brain.craftTable == null) {
+					brain.craftTable = brain.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState());
+				}
 			}
 			return true;
 		}
@@ -70,22 +83,60 @@ final class CombatCrafting {
 		brain.holdStill();
 		mob.getLookControl().setLookAt(focus);
 		brain.craftTicks++;
-		if (brain.craftTicks % 8 == 0) {
+		if (brain.crafting == Craft.ENCHANT) {
+			if (brain.craftTicks % 10 == 0) {
+				level.sendParticles(net.minecraft.core.particles.ParticleTypes.ENCHANT, focus.x, focus.y + 0.8, focus.z, 20, 0.6, 0.4, 0.6, 0.8);
+			}
+		} else if (brain.craftTicks % 8 == 0) {
 			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			level.playSound(null, mob.blockPosition(), SoundEvents.WOOD_HIT, SoundSource.HOSTILE, 0.8F, 1.0F);
 		}
-		if (brain.craftTicks >= CRAFT_TICKS) {
+		if (brain.craftTicks >= (brain.crafting == Craft.ENCHANT ? 60 : CRAFT_TICKS)) {
 			switch (brain.crafting) {
 				case LADDERS -> brain.ladders += 16;
 				case LAVA_BUCKET -> Consumable.addCarried(brain, Consumable.LAVA_BUCKET, 1, null);
 				case WATER_BUCKET -> Consumable.addCarried(brain, Consumable.WATER_BUCKET, 2, null);
 				case ANVILS -> brain.anvils += 3;
+				case GEAR -> {
+					net.minecraft.world.item.ItemStack made = Gear.upgrade(brain, mob.getRandom());
+					if (made != null) {
+						level.playSound(null, mob.blockPosition(), SoundEvents.ARMOR_EQUIP_IRON.value(), SoundSource.HOSTILE, 1.0F, 1.0F);
+						com.mobsminecraft.debug.AiStats.add("gear:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(made.getItem()).getPath());
+					}
+				}
+				case ENCHANT -> {
+					int n = Gear.enchantAll(level, mob, mob.getRandom(), 10, 30);
+					brain.gearEnchanted = true;
+					if (mob instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) {
+						brain.bowEnchanted = true;
+					}
+					level.playSound(null, mob.blockPosition(), SoundEvents.ENCHANTMENT_TABLE_USE, SoundSource.HOSTILE, 1.0F, 1.0F);
+					com.mobsminecraft.debug.AiStats.add("enchanted_pieces", n);
+				}
 			}
 			level.playSound(null, mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
 			com.mobsminecraft.debug.AiStats.add("craft:" + brain.crafting.name().toLowerCase());
 			brain.crafting = null;
 		}
 		return true;
+	}
+
+	/** A few bookshelves around a freshly placed enchanting table. */
+	private static void placeBookshelves(SmartBrain brain, ServerLevel level, BlockPos table, RandomSource r) {
+		if (table == null) {
+			return;
+		}
+		int wanted = 2 + r.nextInt(3);
+		for (int dx = -2; dx <= 2 && wanted > 0; dx++) {
+			for (int dz = -2; dz <= 2 && wanted > 0; dz++) {
+				if ((Math.abs(dx) == 2 || Math.abs(dz) == 2) && r.nextFloat() < 0.35F) {
+					BlockPos p = table.offset(dx, 0, dz);
+					if (BlockWork.isFloor(level, p.below()) && !p.closerThan(brain.mob.blockPosition(), 1.5) && brain.place(level, p, Blocks.BOOKSHELF.defaultBlockState(), false)) {
+						wanted--;
+					}
+				}
+			}
+		}
 	}
 
 	// ------------------------------------------------------------------ anvils

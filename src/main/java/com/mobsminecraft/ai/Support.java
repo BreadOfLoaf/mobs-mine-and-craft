@@ -33,22 +33,43 @@ final class Support {
 		if (!brain.supporter || brain.supportCooldown > 0) {
 			return;
 		}
-		brain.supportCooldown = 20;
-		if (RedstoneTraps.waveSize(level, mob, target) < 2) {
-			return;
-		}
+		brain.supportCooldown = 15;
 		RandomSource r = mob.getRandom();
-		List<Mob> allies = level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(12.0),
+		List<Mob> allies = level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(14.0),
 			m -> m != mob && m.isAlive() && m instanceof Enemy && mob.hasLineOfSight(m));
+		// Supporters help any fight nearby, even one they aren't in themselves.
+		if (target == null) {
+			for (Mob ally : allies) {
+				if (SmartBrain.isValidTarget(ally.getTarget())) {
+					target = ally.getTarget();
+					break;
+				}
+			}
+			if (target == null) {
+				return;
+			}
+		}
 
 		Mob recipient = null;
 		Holder<Potion> potion = null;
-		for (Mob ally : allies) {
-			if (ally.getHealth() / ally.getMaxHealth() < 0.6F) {
-				recipient = ally;
-				potion = ally.isInvertedHealAndHarm() ? Potions.HARMING : Potions.HEALING;
-				break;
+		// An ally that fell back to be healed comes first, then the supporter itself, then anyone hurt.
+		Mob asked = brain.healRequest;
+		brain.healRequest = null;
+		if (asked != null && asked.isAlive() && asked.distanceTo(mob) < 16.0F && asked.getHealth() < asked.getMaxHealth()) {
+			recipient = asked;
+		} else if (mob.getHealth() / mob.getMaxHealth() < 0.5F) {
+			recipient = mob;
+		} else {
+			Mob worst = null;
+			for (Mob ally : allies) {
+				if (ally.getHealth() / ally.getMaxHealth() < 0.7F && (worst == null || ally.getHealth() / ally.getMaxHealth() < worst.getHealth() / worst.getMaxHealth())) {
+					worst = ally;
+				}
 			}
+			recipient = worst;
+		}
+		if (recipient != null) {
+			potion = recipient.isInvertedHealAndHarm() ? Potions.HARMING : (recipient.getMaxHealth() > 30.0F ? Potions.STRONG_HEALING : Potions.HEALING);
 		}
 		if (recipient == null) {
 			for (Mob ally : allies) {
@@ -67,6 +88,13 @@ final class Support {
 
 		ItemStack stack = PotionContents.createItemStack(Items.SPLASH_POTION, potion);
 		ThrownSplashPotion thrown = new ThrownSplashPotion(level, mob, stack);
+		if (recipient == mob) {
+			Projectile.spawnProjectileUsingShoot(thrown, level, stack, 0.0, -1.0, 0.0, 0.2F, 0.0F);
+			level.playSound(null, mob.getX(), mob.getY(), mob.getZ(), SoundEvents.SPLASH_POTION_THROW, SoundSource.HOSTILE, 1.0F, 0.9F);
+			brain.supportCooldown = 40 + r.nextInt(30);
+			com.mobsminecraft.debug.AiStats.add("support_self_heal");
+			return;
+		}
 		double dx = recipient.getX() - mob.getX();
 		double dy = recipient.getY() - mob.getY();
 		double dz = recipient.getZ() - mob.getZ();
@@ -74,7 +102,7 @@ final class Support {
 		Projectile.spawnProjectileUsingShoot(thrown, level, stack, dx, dy + horiz * 0.2, dz, 0.75F, 2.0F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 		level.playSound(null, mob.getX(), mob.getY(), mob.getZ(), SoundEvents.SPLASH_POTION_THROW, SoundSource.HOSTILE, 1.0F, 0.9F);
-		brain.supportCooldown = 50 + r.nextInt(40);
-		com.mobsminecraft.debug.AiStats.add("support_potion");
+		brain.supportCooldown = 40 + r.nextInt(30);
+		com.mobsminecraft.debug.AiStats.add(potion == Potions.HEALING || potion == Potions.STRONG_HEALING || potion == Potions.HARMING ? "support_heal" : "support_buff");
 	}
 }

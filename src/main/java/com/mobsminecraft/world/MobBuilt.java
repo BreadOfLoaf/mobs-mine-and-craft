@@ -23,6 +23,13 @@ public final class MobBuilt {
 		}
 	}
 
+	public static void unmark(ServerLevel level, BlockPos pos) {
+		LongOpenHashSet set = PLACED.get(level);
+		if (set != null) {
+			set.remove(pos.asLong());
+		}
+	}
+
 	public static boolean contains(ServerLevel level, BlockPos pos) {
 		LongOpenHashSet set = PLACED.get(level);
 		return set != null && set.contains(pos.asLong());

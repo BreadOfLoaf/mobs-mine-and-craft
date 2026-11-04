@@ -88,6 +88,10 @@ public enum Consumable {
 		this.uses = uses;
 	}
 
+	boolean isApple() {
+		return this == GOLDEN_APPLE || this == ENCHANTED_GOLDEN_APPLE;
+	}
+
 	/** Everything a mob can roll as its general-purpose consumable. Apples and totems have their own rolls. */
 	private static final Consumable[] POOL = {
 		SNOWBALLS, EGGS, WIND_CHARGES, SPLASH_POTION, LINGERING_POTION, DRINK_POTION, FIRE_CHARGE, ENDER_PEARL, CHORUS_FRUIT,
@@ -123,11 +127,12 @@ public enum Consumable {
 		if (r.nextFloat() < 0.15F) {
 			give(brain, ENDER_PEARL, r);
 		}
+		// Golden apples are real: eaten ones are gone, and any left over drop when the mob dies.
 		float apple = r.nextFloat();
-		if (apple < 0.01F) {
-			give(brain, ENCHANTED_GOLDEN_APPLE, r);
-		} else if (apple < 0.08F) {
-			give(brain, GOLDEN_APPLE, r);
+		if (apple < 0.02F) {
+			addCarried(brain, ENCHANTED_GOLDEN_APPLE, 1, null);
+		} else if (apple < (passive ? 0.08F : 0.18F)) {
+			addCarried(brain, GOLDEN_APPLE, 1 + (r.nextFloat() < 0.3F ? 1 : 0), null);
 		}
 		// Totems work for any mob holding one; vanilla handles the resurrection.
 		if (r.nextFloat() < 0.03F && mob.getItemBySlot(EquipmentSlot.OFFHAND).isEmpty()) {
@@ -182,7 +187,10 @@ public enum Consumable {
 			if (cooldown > 0) {
 				brain.consumableCooldown = cooldown * 2 + r.nextInt(20);
 				com.mobsminecraft.debug.AiStats.add("use:" + c.type.name().toLowerCase());
-				// Consumables never run out; what a mob drops on death is decided separately.
+				// Consumables never run out, except golden apples, which are eaten for real.
+				if (c.type.isApple() && --c.uses <= 0) {
+					brain.carried.remove(c);
+				}
 				mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 				return;
 			}
@@ -213,8 +221,8 @@ public enum Consumable {
 			case FLINT_AND_STEEL -> griefing && dist < (mob instanceof Villager ? 7 : 5) && sight ? useFlintAndSteel(level, mob, target) : 0;
 			case FIREWORK_ROCKET -> dist > 3 && dist < 18 && sight ? shootFirework(level, mob, target) : 0;
 			case TRIDENT -> dist > 3 && dist < 20 && sight ? throwTrident(level, mob, target) : 0;
-			case GOLDEN_APPLE -> hp < 0.4F ? consume(level, mob, new ItemStack(Items.GOLDEN_APPLE), 60) : 0;
-			case ENCHANTED_GOLDEN_APPLE -> hp < 0.3F ? consume(level, mob, new ItemStack(Items.ENCHANTED_GOLDEN_APPLE), 60) : 0;
+			case GOLDEN_APPLE -> hp < 0.45F && c.uses > 0 ? eatApple(level, mob, new ItemStack(Items.GOLDEN_APPLE)) : 0;
+			case ENCHANTED_GOLDEN_APPLE -> hp < 0.35F && c.uses > 0 ? eatApple(level, mob, new ItemStack(Items.ENCHANTED_GOLDEN_APPLE)) : 0;
 		};
 	}
 
@@ -222,6 +230,14 @@ public enum Consumable {
 	private static int consume(ServerLevel level, Mob mob, ItemStack stack, int cooldown) {
 		stack.finishUsingItem(level, mob);
 		return cooldown;
+	}
+
+	private static int eatApple(ServerLevel level, Mob mob, ItemStack apple) {
+		level.playSound(null, mob.blockPosition(), SoundEvents.GENERIC_EAT.value(), SoundSource.HOSTILE, 1.0F, 1.0F);
+		level.playSound(null, mob.blockPosition(), SoundEvents.PLAYER_BURP, SoundSource.HOSTILE, 0.5F, 1.0F);
+		level.sendParticles(new net.minecraft.core.particles.ItemParticleOption(net.minecraft.core.particles.ParticleTypes.ITEM, apple.getItem()),
+			mob.getX(), mob.getEyeY() - 0.2, mob.getZ(), 10, 0.2, 0.1, 0.2, 0.05);
+		return consume(level, mob, apple, 60);
 	}
 
 	private static boolean hasHarmfulEffect(Mob mob) {

@@ -81,6 +81,15 @@ public final class Inventory {
 			brain.blocks = Math.min(128, brain.blocks + stack.getCount());
 			return true;
 		}
+		// Meat goes in the food pouch: hostile mobs eat it to heal, and smelt raw meat when they can.
+		if (!brain.isPassive() && Recovery.isRawMeat(stack)) {
+			brain.rawMeat += stack.getCount();
+			return true;
+		}
+		if (!brain.isPassive() && Recovery.isCookedMeat(stack)) {
+			brain.cookedMeat += stack.getCount();
+			return true;
+		}
 		Consumable type = consumableFor(stack);
 		if (type != null) {
 			Holder<Potion> potion = potionOf(stack);
@@ -112,6 +121,21 @@ public final class Inventory {
 			brain.mob.spawnAtLocation(level, stack);
 		}
 		brain.loot.clear();
+		// Uneaten golden apples and meat are real items too.
+		for (Consumable.Carried c : brain.carried) {
+			if (c.type.isApple() && c.uses > 0) {
+				brain.mob.spawnAtLocation(level, new ItemStack(c.type == Consumable.GOLDEN_APPLE ? Items.GOLDEN_APPLE : Items.ENCHANTED_GOLDEN_APPLE, c.uses));
+			}
+		}
+		brain.carried.removeIf(c -> c.type.isApple());
+		if (brain.rawMeat > 0) {
+			brain.mob.spawnAtLocation(level, new ItemStack(Recovery.RAW_MEAT[brain.meatType], Math.min(64, brain.rawMeat)));
+		}
+		if (brain.cookedMeat > 0) {
+			brain.mob.spawnAtLocation(level, new ItemStack(Recovery.COOKED_MEAT[brain.meatType], Math.min(64, brain.cookedMeat)));
+		}
+		brain.rawMeat = 0;
+		brain.cookedMeat = 0;
 	}
 
 	// ------------------------------------------------------------------ consumables <-> items
