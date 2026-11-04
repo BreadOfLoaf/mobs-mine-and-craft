@@ -160,6 +160,23 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 3), 8, Behaviour.FIGHT));
 		add(new Scenario("survival", 12000, "A bot plays survival in an ordinary generated world: natural spawns, day and night, mining, building, fighting back.",
 			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		add(new Scenario("gifters", 1200, "Zombie, skeleton and creeper gifters around a standing bot: they should never hurt it.", (run, o) -> {},
+			mobs("zombie", 3, "skeleton", 2, "creeper", 1), 8, Behaviour.STAND));
+		add(new Scenario("roles", 1500, "Builders, crafters, engineers and minemen near a standing bot: they should do their jobs, not charge.", (run, o) -> {},
+			mobs("zombie", 8), 10, Behaviour.STAND));
+		add(new Scenario("griefers", 1200, "Griefer zombies in a field with a few player-built huts: TNT, then run.", (run, o) -> {
+			for (int i = 0; i < 3; i++) {
+				run.cmd("fill %d 121 %d %d 123 %d minecraft:oak_planks hollow", o.getX() - 12 + i * 10, o.getZ() + 6, o.getX() - 9 + i * 10, o.getZ() + 9);
+			}
+		}, mobs("zombie", 4), 8, Behaviour.STAND));
+		add(new Scenario("imposters", 1800, "Two imposters among ordinary zombies and skeletons, next to a standing bot.", (run, o) -> {},
+			mobs("zombie", 6, "skeleton", 2), 6, Behaviour.STAND));
+		add(new Scenario("biome_blocks", 1200, "Bot on a pillar; the west half of the arena is desert, the east half taiga. What do mobs build with?", (run, o) -> {
+			run.cmd("fillbiome %d 100 %d %d 170 %d minecraft:desert", o.getX() - 40, o.getZ() - 40, o.getX(), o.getZ() + 40);
+			run.cmd("fillbiome %d 100 %d %d 170 %d minecraft:taiga", o.getX() + 1, o.getZ() - 40, o.getX() + 40, o.getZ() + 40);
+			run.cmd("fill %d 121 %d %d 128 %d minecraft:obsidian", o.getX(), o.getZ(), o.getX(), o.getZ());
+			run.botStart = Vec3.atBottomCenterOf(o.above(9));
+		}, mobs("zombie", 8, "skeleton", 2), 12, Behaviour.STAND));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -205,6 +222,12 @@ public class Playtest implements ModInitializer {
 			}
 		});
 
+		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
+			if (current != null && entity instanceof Mob m && m.entityTags().contains(current.runTag)) {
+				AiStats.add("death:" + ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain().personalityName() + ":" + source.type().msgId()
+					+ (source.getEntity() == null ? "" : ":" + BuiltInRegistries.ENTITY_TYPE.getKey(source.getEntity().getType()).getPath()));
+			}
+		});
 		// The bot never actually takes damage: every hit is recorded and cancelled.
 		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
 			if (current != null && source.getEntity() == null && source.getDirectEntity() != null
@@ -536,6 +559,10 @@ public class Playtest implements ModInitializer {
 						case "loot" -> { brain.debugPersonality("fighter"); if (pi++ % 2 == 0) brain.debugForce("greedy"); }
 						case "cleanup" -> { brain.debugPersonality("builder"); if (pi++ == 0) brain.debugForce("mess"); }
 						case "hero" -> brain.debugPersonality("hero");
+						case "gifters" -> brain.debugPersonality("gifter");
+						case "roles" -> brain.debugPersonality(new String[] {"builder", "crafter", "engineer", "mineman"}[pi++ % 4]);
+						case "griefers" -> brain.debugPersonality("griefer");
+						case "imposters" -> brain.debugPersonality(pi++ < 2 ? "imposter" : "tactician");
 						case "cover" -> { brain.debugPersonality("tactician"); brain.debugForce("nosniper"); }
 						default -> {}
 					}
@@ -709,7 +736,8 @@ public class Playtest implements ModInitializer {
 				}
 				sb.append("  gold blocks in forts: ").append(gold).append('\n');
 			}
-			if (this.scenario.name().equals("personas") || this.scenario.name().equals("loot")) {
+			if (this.scenario.name().equals("personas") || this.scenario.name().equals("loot") || this.scenario.name().equals("griefers")
+				|| this.scenario.name().equals("imposters") || this.scenario.name().equals("roles") || this.scenario.name().equals("gifters")) {
 				for (Tracked t : this.tracked) {
 					StringBuilder eq = new StringBuilder();
 					for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {

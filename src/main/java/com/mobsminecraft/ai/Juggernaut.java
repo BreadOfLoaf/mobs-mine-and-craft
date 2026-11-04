@@ -20,7 +20,7 @@ final class Juggernaut {
 	static final String KNIGHTS_TAG = MobsMineAndCraft.MOD_ID + ".knights_spawned";
 	private static final Identifier HEALTH_BONUS = Identifier.fromNamespaceAndPath(MobsMineAndCraft.MOD_ID, "juggernaut_health");
 	private static final Identifier KNOCKBACK_BONUS = Identifier.fromNamespaceAndPath(MobsMineAndCraft.MOD_ID, "juggernaut_knockback");
-	private static final float CHANCE = 0.03F;
+	private static final float CHANCE = 0.015F;
 
 	private Juggernaut() {}
 

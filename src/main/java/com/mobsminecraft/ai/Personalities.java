@@ -41,7 +41,7 @@ final class Personalities {
 			case MINEMAN -> mineman(b, level, griefing);
 			case IMPOSTER -> imposter(b, level);
 			case HERO -> hero(b, level, target, griefing);
-			case ENGINEER -> keepAway(b, target, 6.0, b.rsPlan == null && b.trapPlan == null);
+			case ENGINEER -> engineer(b, level, target, griefing);
 			case CRAFTER -> crafter(b, level, target, griefing);
 			default -> false;
 		};
@@ -62,13 +62,17 @@ final class Personalities {
 		if (!free || target == null || mob.distanceTo(target) >= range) {
 			return false;
 		}
-		Vec3 away = mob.position().subtract(target.position()).multiply(1.0, 0.0, 1.0);
-		if (away.lengthSqr() < 1.0E-4) {
-			away = new Vec3(1.0, 0.0, 0.0);
+		// Pick a spot away from them once and walk there at a normal pace (no jittery re-aiming every tick).
+		if (b.awayGoal == null || --b.awayTicks <= 0 || mob.position().distanceToSqr(b.awayGoal) < 2.0
+			|| b.awayGoal.distanceToSqr(target.position()) < range * range) {
+			Vec3 away = mob.position().subtract(target.position()).multiply(1.0, 0.0, 1.0);
+			if (away.lengthSqr() < 1.0E-4) {
+				away = new Vec3(1.0, 0.0, 0.0);
+			}
+			b.awayGoal = mob.position().add(away.normalize().scale(range + 3.0));
+			b.awayTicks = 60;
 		}
-		Vec3 goal = mob.position().add(away.normalize().scale(range + 3.0));
-		b.walkTo(goal, b.walkSpeed() * 1.2);
-		mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
+		b.walkTo(b.awayGoal, b.walkSpeed());
 		return true;
 	}
 
@@ -243,9 +247,26 @@ final class Personalities {
 			}
 		}
 		LivingEntity victim = b.imposterVictim;
+		if (victim != null && !victim.isAlive() && victim.getLastHurtByMob() == mob) {
+			slain(b, level, victim);
+		}
 		if (victim != null && (!victim.isAlive() || victim.distanceTo(mob) > 24.0F)) {
 			b.imposterVictim = null;
 			victim = null;
+		}
+		// Between fights: hand the player something it stole.
+		if (victim == null && !b.stolen.isEmpty() && b.giftCooldown <= 0) {
+			Player player = nearestPlayer(level, mob, 16.0);
+			if (player != null) {
+				if (mob.distanceTo(player) > 3.0F) {
+					b.walkTo(player.position(), b.walkSpeed());
+					return true;
+				}
+				toss(level, mob, player, b.stolen.remove(0));
+				b.giftCooldown = 600 + r.nextInt(600);
+				com.mobsminecraft.debug.AiStats.add("imposter_gift");
+				return true;
+			}
 		}
 		if (victim == null && b.imposterCooldown <= 0) {
 			List<Mob> near = level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(14.0), m -> m != mob && m.isAlive()
@@ -282,6 +303,75 @@ final class Personalities {
 		return false;
 	}
 
+	/** An imposter killed an "ally": it pockets their best gear and upgrades its own armour a step. */
+	private static void slain(SmartBrain b, ServerLevel level, LivingEntity victim) {
+		Mob mob = b.mob;
+		b.imposterKills++;
+		com.mobsminecraft.debug.AiStats.add("imposter_kill");
+		for (EquipmentSlot slot : EquipmentSlot.values()) {
+			ItemStack st = victim.getItemBySlot(slot);
+			if (!st.isEmpty() && st.isDamageableItem() && b.stolen.size() < 6) {
+				b.stolen.add(st.copy());
+				victim.setItemSlot(slot, ItemStack.EMPTY);
+			}
+		}
+		if (b.stolen.isEmpty() && b.stolen.size() < 6 && mob.getRandom().nextFloat() < 0.5F) {
+			// Nothing worth taking: it still "finds" something to give away later.
+			Item[] loot = {Items.IRON_INGOT, Items.GOLDEN_CARROT, Items.ARROW, Items.BREAD};
+			b.stolen.add(new ItemStack(loot[mob.getRandom().nextInt(loot.length)], 1 + mob.getRandom().nextInt(4)));
+		}
+		if (Juggernaut.canWearArmor(mob)) {
+			ItemStack up = Gear.upgrade(b, mob.getRandom());
+			if (up == null && b.imposterKills % 3 == 0) {
+				// Fully diamond: enchant it instead.
+				Gear.enchantAll(level, mob, mob.getRandom(), 10, 25);
+			}
+			if (up != null) {
+				com.mobsminecraft.debug.AiStats.add("imposter_upgrade:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(up.getItem()).getPath());
+			}
+			level.playSound(null, mob.blockPosition(), SoundEvents.ARMOR_EQUIP_DIAMOND.value(), SoundSource.HOSTILE, 0.8F, 1.0F);
+		}
+	}
+
+	// ------------------------------------------------------------------ engineer
+
+	/**
+	 * Engineers never charge in. They circle the player at trap range and keep setting things up: dispensers,
+	 * repeater-clock turrets, TNT carts. Getting too close makes them back off.
+	 */
+	private static boolean engineer(SmartBrain b, ServerLevel level, LivingEntity target, boolean griefing) {
+		Mob mob = b.mob;
+		if (target == null || !(mob instanceof Enemy)) {
+			return false;
+		}
+		if (RedstoneTraps.tick(b, level, target, griefing)) {
+			return true;
+		}
+		double dist = mob.distanceTo(target);
+		if (dist < 5.0) {
+			return keepAway(b, target, 9.0, true);
+		}
+		if (dist > 24.0) {
+			b.walkTo(target.position(), b.walkSpeed());
+			return true;
+		}
+		// Orbit: a point a little way round the circle at about 10 blocks.
+		if (mob.getRandom().nextInt(200) == 0) {
+			b.orbitDir = -b.orbitDir;
+		}
+		double a = Math.atan2(mob.getZ() - target.getZ(), mob.getX() - target.getX()) + 0.45 * b.orbitDir;
+		double radius = 10.0;
+		Vec3 goal = new Vec3(target.getX() + Math.cos(a) * radius, mob.getY(), target.getZ() + Math.sin(a) * radius);
+		if (mob.tickCount % 10 == 0) {
+			mob.getNavigation().moveTo(goal.x, goal.y, goal.z, b.walkSpeed());
+		}
+		mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
+		if (mob.tickCount % 100 == 0) {
+			com.mobsminecraft.debug.AiStats.add("engineer_orbit");
+		}
+		return true;
+	}
+
 	// ------------------------------------------------------------------ hero
 
 	/** Nearly beaten: flee, craft Juggernaut armour and a totem at a table, and come back much stronger. */
@@ -307,10 +397,8 @@ final class Personalities {
 			LivingEntity from = b.heroFrom != null ? b.heroFrom : target;
 			if (from != null && from.isAlive() && mob.distanceTo(from) < 16.0F && b.heroTicks < 120) {
 				keepAway(b, from, 16.0, true);
-				mob.setSprinting(true);
 				return true;
 			}
-			mob.setSprinting(false);
 			b.heroPhase = 2;
 			b.heroTicks = 0;
 			b.heroTable = griefing ? b.placeAdjacent(level, Blocks.CRAFTING_TABLE.defaultBlockState()) : null;
@@ -365,7 +453,7 @@ final class Personalities {
 		if (b.crafterItem != null) {
 			return deliver(b, level);
 		}
-		if (b.crafterTicks == 0 && keepAway(b, target, 8.0, true)) {
+		if (b.crafterTicks == 0 && keepAway(b, target != null ? target : nearestPlayer(level, mob, 8.0), 8.0, true)) {
 			return true;
 		}
 		if (b.crafterTicks == 0) {

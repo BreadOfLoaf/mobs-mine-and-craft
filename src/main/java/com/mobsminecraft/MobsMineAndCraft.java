@@ -29,6 +29,16 @@ public class MobsMineAndCraft implements ModInitializer {
 		net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
 			net.minecraft.commands.Commands.literal("modsmac")
 				.requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
+				// /modsmac spawn <mob> <personality>: spawns a mob (with its usual gear) that has that personality.
+				.then(net.minecraft.commands.Commands.literal("spawn")
+					.then(net.minecraft.commands.Commands.argument("entity", net.minecraft.commands.arguments.ResourceArgument.resource(registryAccess, net.minecraft.core.registries.Registries.ENTITY_TYPE))
+						.suggests(net.minecraft.commands.synchronization.SuggestionProviders.cast(net.minecraft.commands.synchronization.SuggestionProviders.SUMMONABLE_ENTITIES))
+						.then(net.minecraft.commands.Commands.argument("personality", com.mojang.brigadier.arguments.StringArgumentType.word())
+							.suggests((ctx, builder) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
+								java.util.Arrays.stream(com.mobsminecraft.ai.Personality.values()).map(p -> p.name().toLowerCase()), builder))
+							.executes(ctx -> spawnWithPersonality(ctx.getSource(),
+								net.minecraft.commands.arguments.ResourceArgument.getSummonableEntityType(ctx, "entity").value(),
+								com.mojang.brigadier.arguments.StringArgumentType.getString(ctx, "personality"))))))
 				.then(net.minecraft.commands.Commands.literal("nametags")
 					.executes(ctx -> {
 						ctx.getSource().sendSuccess(() -> net.minecraft.network.chat.Component.literal(
@@ -93,6 +103,31 @@ public class MobsMineAndCraft implements ModInitializer {
 		});
 
 		LOGGER.info("Mobs can now mine, craft and build. Good luck.");
+	}
+
+	private static int spawnWithPersonality(net.minecraft.commands.CommandSourceStack source, net.minecraft.world.entity.EntityType<?> type, String name) {
+		com.mobsminecraft.ai.Personality personality;
+		try {
+			personality = com.mobsminecraft.ai.Personality.valueOf(name.toUpperCase(java.util.Locale.ROOT));
+		} catch (IllegalArgumentException e) {
+			source.sendFailure(net.minecraft.network.chat.Component.literal("Unknown personality '" + name + "'. Try: "
+				+ java.util.Arrays.stream(com.mobsminecraft.ai.Personality.values()).map(p -> p.name().toLowerCase()).toList()));
+			return 0;
+		}
+		ServerLevel level = source.getLevel();
+		if (!(type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND) instanceof net.minecraft.world.entity.Mob mob)) {
+			source.sendFailure(net.minecraft.network.chat.Component.literal("That isn't a mob."));
+			return 0;
+		}
+		net.minecraft.world.phys.Vec3 pos = source.getPosition();
+		mob.snapTo(pos.x, pos.y, pos.z, source.getRotation().y, 0.0F);
+		mob.finalizeSpawn(level, level.getCurrentDifficultyAt(mob.blockPosition()), net.minecraft.world.entity.EntitySpawnReason.COMMAND, null);
+		// The personality is read from the mob's tags when its brain starts up on its first tick.
+		com.mobsminecraft.ai.Personality.set(mob, personality);
+		level.addFreshEntityWithPassengers(mob);
+		source.sendSuccess(() -> net.minecraft.network.chat.Component.literal("Spawned ").append(mob.getType().getDescription())
+			.append(" (" + name.toLowerCase(java.util.Locale.ROOT) + ")"), true);
+		return 1;
 	}
 
 	private static void enchantArrow(AbstractArrow arrow, RandomSource r, float chance) {

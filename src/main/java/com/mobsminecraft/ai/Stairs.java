@@ -121,8 +121,18 @@ final class Stairs {
 		return true;
 	}
 
-	private static BlockState stairFor(BlockState block, Direction dir) {
-		Block stairs = block.is(Blocks.OAK_PLANKS) ? Blocks.OAK_STAIRS : block.is(Blocks.COBBLESTONE) ? Blocks.COBBLESTONE_STAIRS : Blocks.MUD_BRICK_STAIRS;
+	/** Stairs made of the mob's building block where such stairs exist (spruce, sandstone, blackstone...). */
+	static BlockState stairFor(BlockState block, Direction dir) {
+		String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block.getBlock()).getPath();
+		Block stairs = Blocks.COBBLESTONE_STAIRS;
+		for (String name : new String[] {id.replace("_planks", "_stairs"), id + "_stairs", id.replaceAll("s$", "") + "_stairs",
+			id.equals("netherrack") ? "nether_brick_stairs" : "", id.equals("end_stone") ? "end_stone_brick_stairs" : "", id.equals("dirt") ? "mud_brick_stairs" : ""}) {
+			var opt = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getOptional(net.minecraft.resources.Identifier.withDefaultNamespace(name));
+			if (!name.isEmpty() && opt.isPresent() && opt.get() instanceof StairBlock) {
+				stairs = opt.get();
+				break;
+			}
+		}
 		return stairs.defaultBlockState().setValue(StairBlock.FACING, dir);
 	}
 

@@ -22,6 +22,14 @@ public abstract class MobMixin implements SmartMobHolder {
 		return this.mmc$brain;
 	}
 
+	/** Gifters, imposters, minemen, engineers (and builders/crafters unless attacked) never lock on to the player. */
+	@Inject(method = "setTarget", at = @At("HEAD"), cancellable = true)
+	private void mmc$refuseTarget(net.minecraft.world.entity.LivingEntity target, CallbackInfo ci) {
+		if (this.mmc$brain != null && this.mmc$brain.refusesTarget(target)) {
+			ci.cancel();
+		}
+	}
+
 	/** Mobs in the middle of building something don't despawn, so houses get finished. */
 	@Inject(method = "checkDespawn", at = @At("HEAD"), cancellable = true)
 	private void mmc$noDespawnWhileBuilding(CallbackInfo ci) {

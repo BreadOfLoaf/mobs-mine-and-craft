@@ -61,6 +61,28 @@ final class Houses {
 	private static final Palette BRICK = new Palette(Blocks.BRICKS, Blocks.STONE_BRICKS, Blocks.DARK_OAK_PLANKS, Blocks.DARK_OAK_STAIRS,
 		Blocks.SPRUCE_PLANKS, Blocks.DARK_OAK_DOOR, Blocks.GLASS_PANE);
 
+	/**
+	 * The block a mob builds its towers, bridges and walls from: what its biome offers (spruce in the taiga,
+	 * sandstone in the desert, acacia on the savanna...), or now and then the cobblestone and dirt it digs up.
+	 */
+	static Block buildBlockFor(ServerLevel level, BlockPos pos, RandomSource r) {
+		if (level.dimension() == net.minecraft.world.level.Level.NETHER) {
+			return r.nextFloat() < 0.6F ? Blocks.NETHERRACK : Blocks.BLACKSTONE;
+		}
+		if (level.dimension() == net.minecraft.world.level.Level.END) {
+			return Blocks.END_STONE;
+		}
+		if (r.nextFloat() < 0.2F) {
+			return r.nextBoolean() ? Blocks.COBBLESTONE : Blocks.DIRT;
+		}
+		Block wall = forBiome(level, pos, r).wall();
+		// Bricks are something you make, not something you find.
+		if (wall == Blocks.BRICKS || wall == Blocks.STONE_BRICKS || wall == Blocks.DEEPSLATE_BRICKS) {
+			return Blocks.COBBLESTONE;
+		}
+		return wall;
+	}
+
 	/** Griefers' ugly dirt huts. */
 	static final Palette DIRT_HUT = new Palette(Blocks.DIRT, Blocks.DIRT, Blocks.DIRT, null, null, null, null);
 

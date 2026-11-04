@@ -59,7 +59,7 @@ public enum Personality {
 	}
 
 	/** Replaces a mob's personality (used by test hooks). */
-	static void set(Mob mob, Personality p) {
+	public static void set(Mob mob, Personality p) {
 		mob.entityTags().stream().filter(t -> t.startsWith(TAG_PREFIX)).toList().forEach(mob::removeTag);
 		mob.addTag(TAG_PREFIX + p.name());
 	}
@@ -70,13 +70,13 @@ public enum Personality {
 			return pick(r, new Personality[] {TACTICIAN, FIGHTER, GIFTER, IMPOSTER, HERO}, new int[] {70, 20, 4, 3, 3});
 		}
 		if (mob instanceof Villager) {
-			return pick(r, new Personality[] {TACTICIAN, GRIEFER, BUILDER, MINEMAN, GIFTER, CRAFTER, FIGHTER}, new int[] {40, 16, 14, 10, 10, 6, 4});
+			return pick(r, new Personality[] {TACTICIAN, GRIEFER, BUILDER, MINEMAN, GIFTER, CRAFTER, FIGHTER, IMPOSTER}, new int[] {38, 16, 14, 10, 10, 6, 4, 4});
 		}
 		if (!(mob instanceof Enemy)) {
 			return pick(r, new Personality[] {TACTICIAN, BUILDER, MINEMAN, GRIEFER, GIFTER, FIGHTER}, new int[] {60, 10, 10, 8, 8, 4});
 		}
 		return pick(r, new Personality[] {TACTICIAN, FIGHTER, BUILDER, ENGINEER, CRAFTER, MINEMAN, HERO, GRIEFER, GIFTER, IMPOSTER},
-			new int[] {38, 16, 9, 8, 8, 7, 5, 5, 2, 2});
+			new int[] {36, 15, 9, 8, 8, 7, 5, 5, 2, 6});
 	}
 
 	private static Personality pick(RandomSource r, Personality[] options, int[] weights) {
@@ -93,6 +93,11 @@ public enum Personality {
 	/** Mobs that don't want to fight the player at all. */
 	boolean peaceful() {
 		return this == GIFTER || this == IMPOSTER || this == MINEMAN;
+	}
+
+	/** Mobs that get on with their job (building, crafting) and only fight a player who attacks them. */
+	boolean busyWithRole() {
+		return this == BUILDER || this == CRAFTER;
 	}
 
 	/** Mobs that use the clever chase tricks (bridging, towering, tunnelling, stairs, ladders). */
@@ -189,6 +194,13 @@ public enum Personality {
 					mob.setHealth(mob.getMaxHealth());
 				}
 				Consumable.addCarried(b, Consumable.GOLDEN_APPLE, 3 + r.nextInt(3), null);
+				// Starts in iron and upgrades it with every "ally" it slays.
+				if (Juggernaut.canWearArmor(mob) && !Juggernaut.isJuggernaut(mob)) {
+					mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
+					mob.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.IRON_CHESTPLATE));
+					mob.setItemSlot(EquipmentSlot.LEGS, new ItemStack(Items.IRON_LEGGINGS));
+					mob.setItemSlot(EquipmentSlot.FEET, new ItemStack(Items.IRON_BOOTS));
+				}
 				b.houseBuilder = BlockWork.canBuild(mob) && r.nextFloat() < 0.3F;
 				b.greedy = true;
 			}

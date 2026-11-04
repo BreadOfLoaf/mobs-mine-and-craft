@@ -330,7 +330,7 @@ final class MobSpecials {
 						}
 						plan.add(feet.offset(dx, pass - 1, dz));
 						// Iron-bar railing: a block high, so the skeleton can't fall off but can still shoot down over it.
-						states.add(pass == 0 ? Blocks.COBBLESTONE.defaultBlockState() : Blocks.IRON_BARS.defaultBlockState());
+						states.add(pass == 0 ? brain.buildState() : Blocks.IRON_BARS.defaultBlockState());
 					}
 				}
 			}

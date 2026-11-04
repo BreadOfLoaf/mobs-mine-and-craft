@@ -110,7 +110,7 @@ final class Cover {
 				return false;
 			}
 		}
-		b.planWall(level, target, 1, 1, 2, Blocks.COBBLESTONE.defaultBlockState(), false);
+		b.planWall(level, target, 1, 1, 2, b.buildState(), false);
 		b.coverHide = feet;
 		b.coverPeek = peek;
 		b.coverPhase = BUILDING;

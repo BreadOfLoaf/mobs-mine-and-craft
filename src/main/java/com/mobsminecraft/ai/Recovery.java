@@ -105,7 +105,6 @@ final class Recovery {
 		brain.recoverGoal = goal;
 		brain.recoverWalled = false;
 		brain.recoverFire = null;
-		mob.setSprinting(true);
 		com.mobsminecraft.debug.AiStats.add("retreat");
 		return true;
 	}
@@ -125,7 +124,7 @@ final class Recovery {
 			mob.setTarget(null);
 		}
 		if (brain.recoverTicks < 80 && mob.position().distanceToSqr(brain.recoverGoal) > 6.0) {
-			brain.walkTo(brain.recoverGoal, brain.walkSpeed() * 1.35);
+			brain.walkTo(brain.recoverGoal, brain.walkSpeed());
 			return true;
 		}
 		mob.setSprinting(false);

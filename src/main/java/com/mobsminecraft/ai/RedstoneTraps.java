@@ -65,7 +65,7 @@ final class RedstoneTraps {
 		}
 		double dist = mob.distanceTo(target);
 		boolean specialist = brain.personality == Personality.ENGINEER;
-		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || waveSize(level, mob, target) < (specialist ? 1 : 2)) {
+		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || (!specialist && waveSize(level, mob, target) < 2)) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
