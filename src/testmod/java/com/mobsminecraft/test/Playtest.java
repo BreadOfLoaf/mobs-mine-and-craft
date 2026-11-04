@@ -253,8 +253,27 @@ public class Playtest implements ModInitializer {
 					.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), 1))
 					.then(Commands.argument("runs", IntegerArgumentType.integer(1, 20))
 						.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), IntegerArgumentType.getInteger(ctx, "runs")))))));
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
+			Commands.literal("train")
+				.then(Commands.literal("start").then(Commands.argument("generations", IntegerArgumentType.integer(1, 200))
+					.then(Commands.argument("population", IntegerArgumentType.integer(4, 64)).executes(ctx -> {
+						Trainer.start(ctx.getSource().getServer(), IntegerArgumentType.getInteger(ctx, "generations"), IntegerArgumentType.getInteger(ctx, "population"));
+						return 1;
+					}))))
+				.then(Commands.literal("validate").then(Commands.argument("episodes", IntegerArgumentType.integer(1, 200)).executes(ctx -> {
+					Trainer.validate(ctx.getSource().getServer(), IntegerArgumentType.getInteger(ctx, "episodes"));
+					return 1;
+				})))
+				.then(Commands.literal("stop").executes(ctx -> {
+					Trainer.stop(ctx.getSource().getServer());
+					return 1;
+				}))));
 
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			if (Trainer.active != null) {
+				Trainer.active.tick();
+				return;
+			}
 			if (current != null) {
 				if (current.tick()) {
 					RESULTS.add(current.finish());
@@ -277,6 +296,9 @@ public class Playtest implements ModInitializer {
 		});
 		// The bot never actually takes damage: every hit is recorded and cancelled.
 		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
+			if (Trainer.active != null && Trainer.active.onDamage(entity, source, amount)) {
+				return false;
+			}
 			if (current != null && source.getEntity() == null && source.getDirectEntity() != null
 				&& (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow
 					|| source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball)) {

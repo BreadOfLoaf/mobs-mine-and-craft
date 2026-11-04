@@ -354,6 +354,13 @@ public final class SmartBrain {
 	ItemStack eatStashedOffhand;
 	float eatOffhandDrop;
 
+	// Neural tactics (see NeuralTactics): weights being trained (null = the shipped ones), current choice
+	float[] tacticsWeights;
+	NeuralTactics.Tactic tactic = NeuralTactics.Tactic.USUAL;
+	int tacticTimer;
+	int fightTicks;
+	int coverCooldownNeural;
+
 	// Skeleton cover fighting (see Cover)
 	int coverPhase;
 	int coverTicks;
@@ -644,6 +651,16 @@ public final class SmartBrain {
 		}
 	}
 
+	/** Training hook: fight with these network weights (null = the shipped network). */
+	public void setTacticsWeights(float[] w) {
+		this.tacticsWeights = w;
+	}
+
+	/** Training hook: the tactic the network last picked. */
+	public int tacticOrdinal() {
+		return this.tactic.ordinal();
+	}
+
 	/** Test hook: is this mob perched on its sniper tower? */
 	public boolean debugPerched() {
 		return this.sniperPhase == 3;
@@ -914,6 +931,10 @@ public final class SmartBrain {
 			if (Cover.tick(this, level, target, griefing)) {
 				return;
 			}
+			// Tacticians and heroes pick their tactic with the trained network (if there is one).
+			if ((this.personality == Personality.TACTICIAN || this.personality == Personality.HERO) && NeuralTactics.tick(this, level, target)) {
+				return;
+			}
 			// Knights guard their Juggernaut while it builds its fort.
 			if (this.knightOf != null && brainOf(this.knightOf).housePlan != null && Knights.stayClose(this, true)) {
 				return;
@@ -1056,6 +1077,7 @@ public final class SmartBrain {
 		if (this.crafterCooldown > 0 && this.crafterCooldown != Integer.MAX_VALUE) this.crafterCooldown--;
 		if (this.idleCraftCooldown > 0) this.idleCraftCooldown--;
 		if (this.mineCooldown > 0) this.mineCooldown--;
+		if (this.coverCooldownNeural > 0) this.coverCooldownNeural--;
 		if (this.builderWallCooldown > 0) this.builderWallCooldown--;
 		if (this.imposterCooldown > 0) this.imposterCooldown--;
 		if (this.imposterUtilityCooldown > 0) this.imposterUtilityCooldown--;

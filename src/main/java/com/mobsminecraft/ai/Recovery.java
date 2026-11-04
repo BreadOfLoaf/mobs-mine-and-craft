@@ -71,8 +71,16 @@ final class Recovery {
 
 	/** Starts a retreat if the mob has a way to heal. */
 	static boolean tryStart(SmartBrain brain, ServerLevel level, LivingEntity target) {
+		if (brain.mob.getHealth() / brain.mob.getMaxHealth() >= 0.4F) {
+			return false;
+		}
+		return tryStartAny(brain, level, target);
+	}
+
+	/** Starts a retreat at any health (the neural tactics decide when), if the mob has a way to heal. */
+	static boolean tryStartAny(SmartBrain brain, ServerLevel level, LivingEntity target) {
 		Mob mob = brain.mob;
-		if (brain.recoverCooldown > 0 || !(mob instanceof Enemy) || mob.getHealth() / mob.getMaxHealth() >= 0.4F) {
+		if (brain.recoverCooldown > 0 || !(mob instanceof Enemy)) {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
