@@ -125,7 +125,7 @@ final class Castle {
 		brain.houseStates = states;
 		brain.houseIndex = 0;
 		brain.houseCenter = c;
-		brain.buildInterval = 2;
+		brain.buildInterval = 1;
 	}
 
 	private static boolean isPerimeter(int x, int z, int radius) {

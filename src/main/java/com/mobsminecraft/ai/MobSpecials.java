@@ -257,15 +257,28 @@ final class MobSpecials {
 		}
 		if (brain.sniperPhase == 3) {
 			if (brain.sniperNest != null && mob.blockPosition().distManhattan(brain.sniperNest) <= 1) {
-				// Give up the perch after 5 seconds without a shot at the player.
-				brain.sniperBlindTicks = mob.hasLineOfSight(target) && mob.distanceTo(target) < 28 ? 0 : brain.sniperBlindTicks + 1;
-				if (brain.sniperBlindTicks < 100) {
-					brain.holdStill();
+				// Stay up there (no strafing off the edge); only give up after 30 seconds without a shot at the player.
+				brain.sniperBlindTicks = mob.hasLineOfSight(target) && mob.distanceTo(target) < 32 ? 0 : brain.sniperBlindTicks + 1;
+				if (brain.sniperBlindTicks < 600) {
+					holdPerch(brain);
+					// Vanilla skeletons only shoot within 15 blocks; a sniper reaches much farther.
+					double dist = mob.distanceTo(target);
+					if (dist >= 14.0 && dist < 32.0 && mob.hasLineOfSight(target) && brain.punchCooldown == 0
+						&& mob instanceof net.minecraft.world.entity.monster.RangedAttackMob archer && mob.getMainHandItem().is(Items.BOW)) {
+						brain.punchCooldown = 30 + mob.getRandom().nextInt(15);
+						mob.getLookControl().setLookAt(target, 30.0F, 30.0F);
+						archer.performRangedAttack(target, 1.0F);
+						com.mobsminecraft.debug.AiStats.add("sniper_long_shot");
+					}
 					return true;
 				}
 				com.mobsminecraft.debug.AiStats.add("sniper_gave_up");
 			}
 			// Knocked off the tower.
+			if (brain.sniperNest != null && mob.blockPosition().distManhattan(brain.sniperNest) > 1) {
+				BlockPos off = mob.blockPosition().subtract(brain.sniperNest);
+				com.mobsminecraft.debug.AiStats.add("sniper_off_perch:" + off.getX() + "," + off.getY() + "," + off.getZ());
+			}
 			brain.sniperPhase = 0;
 			brain.sniperCooldown = 600;
 		}
@@ -282,6 +295,19 @@ final class MobSpecials {
 		return true;
 	}
 
+	/** Stands still dead centre on the perch (no strafing or drifting toward the edge). */
+	static void holdPerch(SmartBrain brain) {
+		Mob mob = brain.mob;
+		BlockPos nest = brain.sniperNest;
+		double dx = nest.getX() + 0.5 - mob.getX();
+		double dz = nest.getZ() + 0.5 - mob.getZ();
+		if (mob.onGround() && dx * dx + dz * dz > 0.04) {
+			mob.setPos(nest.getX() + 0.5, mob.getY(), nest.getZ() + 0.5);
+		}
+		mob.setDeltaMovement(0.0, mob.getDeltaMovement().y, 0.0);
+		brain.holdStill();
+	}
+
 	/** After the pillar is up: build the crow's nest. Returns true while busy. */
 	static boolean tickSniperNest(SmartBrain brain, ServerLevel level) {
 		Mob mob = brain.mob;
@@ -290,6 +316,8 @@ final class MobSpecials {
 				return true;
 			}
 			BlockPos feet = mob.blockPosition();
+			// Stand dead centre so every railing post can go in.
+			mob.setPos(feet.getX() + 0.5, mob.getY(), feet.getZ() + 0.5);
 			List<BlockPos> plan = new ArrayList<>();
 			List<BlockState> states = new ArrayList<>();
 			for (int pass = 0; pass < 2; pass++) {
@@ -298,8 +326,13 @@ final class MobSpecials {
 						if (dx == 0 && dz == 0) {
 							continue;
 						}
+						// Bars on the four sides only: open corners keep diagonal shots clear.
+						if (pass == 1 && dx != 0 && dz != 0) {
+							continue;
+						}
 						plan.add(feet.offset(dx, pass - 1, dz));
-						states.add(pass == 0 ? Blocks.COBBLESTONE.defaultBlockState() : Blocks.OAK_FENCE.defaultBlockState());
+						// Iron-bar railing: a block high, so the skeleton can't fall off but can still shoot down over it.
+						states.add(pass == 0 ? Blocks.COBBLESTONE.defaultBlockState() : Blocks.IRON_BARS.defaultBlockState());
 					}
 				}
 			}
@@ -316,7 +349,14 @@ final class MobSpecials {
 		if (mob.tickCount % 3 != 0) {
 			return true;
 		}
-		brain.place(level, brain.nestPlan.get(brain.nestIndex), brain.nestStates.get(brain.nestIndex), false);
+		BlockPos np = brain.nestPlan.get(brain.nestIndex);
+		BlockState ns = brain.nestStates.get(brain.nestIndex);
+		mob.setPos(brain.sniperNest.getX() + 0.5, mob.getY(), brain.sniperNest.getZ() + 0.5);
+		if (!brain.place(level, np, ns, false) && level.getBlockState(np).canBeReplaced() && brain.nestPlan.size() < 40) {
+			// Blocked for a moment: try that post again at the end, so the railing has no gaps.
+			brain.nestPlan.add(np);
+			brain.nestStates.add(ns);
+		}
 		if (++brain.nestIndex >= brain.nestPlan.size()) {
 			brain.nestPlan = null;
 			brain.sniperPhase = 3;
@@ -418,7 +458,7 @@ final class MobSpecials {
 		if (r.nextFloat() < 0.5F) {
 			bow.enchant(lookup.getOrThrow(Enchantments.PUNCH), 1 + r.nextInt(2));
 		}
-		if (r.nextFloat() < 0.4F) {
+		if (r.nextFloat() < 0.1F) {
 			bow.enchant(lookup.getOrThrow(Enchantments.FLAME), 1);
 		}
 		if (r.nextFloat() < 0.5F) {

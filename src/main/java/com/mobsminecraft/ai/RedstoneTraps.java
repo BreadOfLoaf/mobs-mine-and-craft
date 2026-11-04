@@ -41,7 +41,7 @@ import net.minecraft.world.phys.Vec3;
  * </ul>
  */
 final class RedstoneTraps {
-	enum Kind { ARROWS, FIRE_CHARGES, TNT_CART }
+	enum Kind { ARROWS, FIRE_CHARGES, TNT_CART, CLOCK }
 
 	private RedstoneTraps() {}
 
@@ -74,6 +74,11 @@ final class RedstoneTraps {
 		// Dispensers only reach about 11 blocks; farther away, send a TNT cart down a track instead.
 		if (dist > 11.0) {
 			return planCart(brain, level, dir, r);
+		}
+		// Now and then: a self-firing turret on a repeater clock.
+		if ((brain.forceClock || r.nextFloat() < 0.12F) && dist > 6.0 && planClock(brain, level, dir)) {
+			brain.forceClock = false;
+			return true;
 		}
 		int roll = r.nextInt(100);
 		Kind first = roll < 45 ? Kind.ARROWS : roll < 80 ? Kind.FIRE_CHARGES : Kind.TNT_CART;
@@ -117,6 +122,81 @@ final class RedstoneTraps {
 		states.add(button(dir));
 		start(brain, kind, plan, states, spot.above(2), dir);
 		return true;
+	}
+
+	/**
+	 * Repeater-clock turret: a dispenser on a cobblestone block, powered from behind through a repeater by a
+	 * two-repeater clock loop. A redstone torch kicks the clock off and is taken away again, leaving the loop
+	 * pulsing, so the dispenser fires on its own every 0.8 seconds until it runs dry. Laid out (top view, the
+	 * player is to the right):
+	 * <pre>
+	 *   E  A  R0 cobble/dispenser
+	 *   RB RA
+	 *   D  C  T(torch)
+	 * </pre>
+	 */
+	private static boolean planClock(SmartBrain brain, ServerLevel level, Direction dir) {
+		Mob mob = brain.mob;
+		BlockPos here = mob.blockPosition();
+		LivingEntity target = mob.getTarget();
+		if (target == null) {
+			return false;
+		}
+		// Right on the player's row or column, 7 blocks out on this side, aimed straight down the line.
+		BlockPos t = target.blockPosition();
+		int dx = t.getX() - here.getX();
+		int dz = t.getZ() - here.getZ();
+		dir = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? Direction.EAST : Direction.WEST) : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+		BlockPos spot = new BlockPos(t.getX(), here.getY(), t.getZ()).relative(dir.getOpposite(), 7);
+		if (Math.abs(t.getY() - here.getY()) > 1) {
+			return false;
+		}
+		Direction back = dir.getOpposite();
+		Direction side = mob.getRandom().nextBoolean() ? dir.getClockWise() : dir.getCounterClockWise();
+		BlockPos r0 = spot.relative(back);
+		BlockPos a = spot.relative(back, 2);
+		BlockPos ra = a.relative(side);
+		BlockPos c = a.relative(side, 2);
+		BlockPos d = c.relative(back);
+		BlockPos rb = a.relative(back).relative(side);
+		BlockPos e = a.relative(back);
+		BlockPos torch = c.relative(side);
+		for (BlockPos p : new BlockPos[] {spot, r0, a, ra, c, d, rb, e, torch}) {
+			if (!level.getBlockState(p).canBeReplaced() || !level.getFluidState(p).isEmpty() || !BlockWork.isFloor(level, p.below())
+				|| p.equals(here) || !level.getEntitiesOfClass(LivingEntity.class, new net.minecraft.world.phys.AABB(p)).isEmpty()) {
+				return false;
+			}
+		}
+		if (!level.getBlockState(spot.above()).canBeReplaced()) {
+			return false;
+		}
+		BlockState wire = Blocks.REDSTONE_WIRE.defaultBlockState();
+		List<BlockPos> plan = new ArrayList<>(List.of(spot, spot.above(), r0, a, ra, c, d, rb, e));
+		List<BlockState> states = new ArrayList<>(List.of(
+			Blocks.COBBLESTONE.defaultBlockState(),
+			Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, dir),
+			repeater(back, 1), wire, repeater(side.getOpposite(), 4), wire, wire, repeater(side, 4), wire));
+		start(brain, Kind.CLOCK, plan, states, torch, dir);
+		return true;
+	}
+
+	/** A repeater whose input is on the {@code inputSide} (that's what FACING means for diodes). */
+	private static BlockState repeater(Direction inputSide, int delay) {
+		return Blocks.REPEATER.defaultBlockState()
+			.setValue(net.minecraft.world.level.block.RepeaterBlock.FACING, inputSide)
+			.setValue(net.minecraft.world.level.block.RepeaterBlock.DELAY, delay);
+	}
+
+	private static void loadTurret(DispenserBlockEntity dispenser) {
+		dispenser.insertItem(new ItemStack(Items.ARROW, 32));
+		dispenser.insertItem(new ItemStack(Items.FIRE_CHARGE, 12));
+		ItemStack slow = net.minecraft.world.item.alchemy.PotionContents.createItemStack(Items.TIPPED_ARROW, net.minecraft.world.item.alchemy.Potions.SLOWNESS);
+		slow.setCount(8);
+		dispenser.insertItem(slow);
+		ItemStack poison = net.minecraft.world.item.alchemy.PotionContents.createItemStack(Items.TIPPED_ARROW, net.minecraft.world.item.alchemy.Potions.POISON);
+		poison.setCount(8);
+		dispenser.insertItem(poison);
+		dispenser.insertItem(new ItemStack(Items.SNOWBALL, 16));
 	}
 
 	private static boolean planCart(SmartBrain brain, ServerLevel level, Direction dir, RandomSource r) {
@@ -189,7 +269,8 @@ final class RedstoneTraps {
 			brain.rsIndex++;
 			mob.getLookControl().setLookAt(Vec3.atCenterOf(p));
 			boolean placed = brain.place(level, p, s, false);
-			boolean essential = s.is(Blocks.DISPENSER) || s.is(Blocks.COBBLESTONE) || s.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock;
+			boolean essential = s.is(Blocks.DISPENSER) || s.is(Blocks.COBBLESTONE) || s.getBlock() instanceof net.minecraft.world.level.block.BaseRailBlock
+				|| brain.rsKind == Kind.CLOCK;
 			if (!placed && essential && !level.getBlockState(p).is(s.getBlock())) {
 				// Something (usually another mob) is in the way: give up and try again shortly, rather than build half a trap.
 				com.mobsminecraft.debug.AiStats.add("rs_blocked");
@@ -197,10 +278,28 @@ final class RedstoneTraps {
 				brain.rsCooldown = 60;
 				return false;
 			}
-			if (placed && s.is(Blocks.DISPENSER) && level.getBlockEntity(p) instanceof DispenserBlockEntity dispenser) {
+			if (placed && s.is(Blocks.DISPENSER) && brain.rsKind == Kind.CLOCK && level.getBlockEntity(p) instanceof DispenserBlockEntity turret) {
+				loadTurret(turret);
+			} else if (placed && s.is(Blocks.DISPENSER) && level.getBlockEntity(p) instanceof DispenserBlockEntity dispenser) {
 				dispenser.insertItem(brain.rsKind == Kind.FIRE_CHARGES ? new ItemStack(Items.FIRE_CHARGE, 16) : new ItemStack(Items.ARROW, 64));
 			}
 			return true;
+		}
+		// Clock turret: a redstone torch starts the loop pulsing and is pulled out again right away.
+		if (brain.rsKind == Kind.CLOCK) {
+			if (brain.place(level, brain.rsButtonSpot, Blocks.REDSTONE_TORCH.defaultBlockState(), false)) {
+				com.mobsminecraft.world.TimedCleanup.scheduleBlock(level, brain.rsButtonSpot, Blocks.REDSTONE_TORCH, 3);
+				com.mobsminecraft.debug.AiStats.add("rs_clock_started");
+			}
+			// The turret winds down after a minute or so: the repeaters are taken back.
+			for (int i = 0; i < brain.rsPlan.size(); i++) {
+				if (brain.rsStates.get(i).is(Blocks.REPEATER)) {
+					com.mobsminecraft.world.TimedCleanup.scheduleBlock(level, brain.rsPlan.get(i), Blocks.REPEATER, 1400);
+				}
+			}
+			brain.rsPlan = null;
+			brain.rsButton = null;
+			return false;
 		}
 		// Plan done: put the TNT cart on the track, then the button that fires it.
 		if (brain.rsKind == Kind.TNT_CART && brain.rsCartPos != null) {

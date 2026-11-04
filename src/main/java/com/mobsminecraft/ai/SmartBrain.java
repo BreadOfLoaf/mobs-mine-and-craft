@@ -94,7 +94,7 @@ public final class SmartBrain {
 	private int decorCooldown;
 
 	// House building
-	private boolean houseBuilder;
+	boolean houseBuilder;
 	private boolean houseBuilt;
 	List<BlockPos> housePlan;
 	List<BlockState> houseStates;
@@ -266,6 +266,30 @@ public final class SmartBrain {
 	BlockPos prospectFurnace;
 	Mob prospectLeader;
 	boolean forceProspect;
+	boolean forceBunker;
+	boolean forceClock;
+
+	// Mob-on-mob fights (see Brawl)
+	boolean brave;
+	LivingEntity brawlFoe;
+
+	// Juggernaut's knights (see Knights) and shield walls (see Shields)
+	Mob knightOf;
+	boolean shieldWall;
+	private boolean knightsSpawned;
+
+	// Boats (see Boats)
+	net.minecraft.world.entity.vehicle.boat.Boat boat;
+	int boatCooldown;
+	int boatCraftTicks;
+	int boatTicks;
+
+	// Concealed bunker while healing (see Recovery)
+	List<BlockPos> bunker;
+	int wallInterval = 4;
+
+	// Blueprint blocks that were blocked (by a mob standing there) get retried at the end
+	private final java.util.Map<BlockPos, Integer> blueprintRetries = new java.util.HashMap<>();
 
 	// Juggernaut fort: tries before it gives up on rough ground
 	private int castleTries;
@@ -331,8 +355,12 @@ public final class SmartBrain {
 			case "crafter" -> { this.combatCrafter = true; this.combatCraftCooldown = 0; this.enchanter = true; this.engineer = false; }
 			case "farmer" -> { this.farmer = true; this.farmCooldown = 0; }
 			case "prospector" -> { this.prospectCooldown = 0; this.forceProspect = true; }
+			case "bunker" -> { this.mob.setHealth(this.mob.getMaxHealth() * 0.3F); this.cookedMeat = 2; this.recoverCooldown = 0; this.forceBunker = true; }
+			case "clock" -> { this.engineer = true; this.rsCooldown = 0; this.combatCrafter = false; this.forceClock = true; }
+			case "brave" -> this.brave = true;
+			case "sniper" -> { this.sniper = true; this.sniperCooldown = 0; this.blocks = 64; this.engineer = false; this.combatCrafter = false; }
 			case "hurt" -> { this.mob.setHealth(this.mob.getMaxHealth() * 0.3F); this.rawMeat = 2; this.cookedMeat = 1; this.recoverCooldown = 0; }
-			case "juggernaut" -> { Juggernaut.make(this.mob, r); this.pickaxe = Juggernaut.pickaxe(this.mob, r); this.castleBuilder = true; this.houseBuilder = false; this.houseBuilt = false;
+			case "juggernaut" -> { Juggernaut.make(this.mob, r); this.knightsSpawned = false; this.pickaxe = Juggernaut.pickaxe(this.mob, r); this.castleBuilder = true; this.houseBuilder = false; this.houseBuilt = false;
 				if (this.mob instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) this.bowEnchanted = true; }
 			default -> {}
 		}
@@ -356,6 +384,11 @@ public final class SmartBrain {
 			this.planHouse(level);
 		}
 		return this.housePlan != null;
+	}
+
+	/** Test hook: is this mob perched on its sniper tower? */
+	public boolean debugPerched() {
+		return this.sniperPhase == 3;
 	}
 
 	public boolean isBowEnchanted() {
@@ -392,7 +425,7 @@ public final class SmartBrain {
 		this.farmer = this.isPassive() && BlockWork.canBuild(this.mob) && r.nextFloat() < (this.mob instanceof Villager ? 0.4F : 0.2F);
 		this.farmCooldown = 200 + r.nextInt(1200);
 		this.prospectCooldown = 600 + r.nextInt(3000);
-		this.combatCraftCooldown = 200 + r.nextInt(400);
+		this.combatCraftCooldown = 100 + r.nextInt(300);
 		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.45F;
 		this.engineer = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
 		this.rsCooldown = 100 + r.nextInt(300);
@@ -407,7 +440,7 @@ public final class SmartBrain {
 		this.gardenCooldown = 200 + r.nextInt(600);
 		this.toolCrafter = BlockWork.isToolHolder(this.mob) && r.nextFloat() < 0.7F;
 		if (this.toolCrafter) {
-			this.toolCraftTimer = 100 + r.nextInt(500);
+			this.toolCraftTimer = 60 + r.nextInt(360);
 		}
 		this.trapBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
 		Juggernaut.roll(this.mob, r);
@@ -428,6 +461,10 @@ public final class SmartBrain {
 		Consumable.assign(this, r);
 		Recovery.assign(this, r);
 		Shields.assign(this, r);
+		Brawl.assign(this, r);
+		if (this.knightOf != null) {
+			Knights.init(this);
+		}
 		MobSpecials.init(this, r);
 	}
 
@@ -448,6 +485,20 @@ public final class SmartBrain {
 		boolean griefing = level.getGameRules().get(GameRules.MOB_GRIEFING);
 		LivingEntity target = this.resolveTarget(level);
 		boolean canBuild = griefing && BlockWork.canBuild(this.mob) && !this.mob.isPassenger();
+
+		if (!this.knightsSpawned) {
+			this.knightsSpawned = true;
+			if (Juggernaut.isJuggernaut(this.mob) && !this.mob.entityTags().contains(Juggernaut.KNIGHTS_TAG)) {
+				this.mob.addTag(Juggernaut.KNIGHTS_TAG);
+				Knights.spawnFor(this.mob, level, this.mob.getRandom());
+			}
+		}
+		if (Boats.tick(this, level, target, griefing)) {
+			return;
+		}
+		if (Brawl.tick(this, level, target)) {
+			return;
+		}
 
 		// A Juggernaut that spots a player builds its fort first, ignoring the player until it's done.
 		if (canBuild && this.castleBuilder && !this.houseBuilt && (target != null || this.housePlan != null) && this.tickFortFirst(level)) {
@@ -525,6 +576,11 @@ public final class SmartBrain {
 
 		if (target != null) {
 			float hp = this.mob.getHealth() / this.mob.getMaxHealth();
+			// A sniper on its perch stays put, whatever else is going on.
+			if (this.sniperPhase == 3 && MobSpecials.trySniper(this, level, target)) {
+				Recovery.snack(this, level);
+				return;
+			}
 			if (Recovery.tryStart(this, level, target)) {
 				return;
 			}
@@ -533,6 +589,10 @@ public final class SmartBrain {
 				return;
 			}
 			if (Stairs.tick(this, level, target)) {
+				return;
+			}
+			// Knights guard their Juggernaut while it builds its fort.
+			if (this.knightOf != null && brainOf(this.knightOf).housePlan != null && Knights.stayClose(this, true)) {
 				return;
 			}
 			// A builder stays on its build; in a group of builders, one keeps building and the rest fight.
@@ -566,6 +626,14 @@ public final class SmartBrain {
 		}
 
 		if (this.housePlan != null && this.tickBlueprint(level)) {
+			return;
+		}
+		if (Knights.stayClose(this, false)) {
+			return;
+		}
+		// A sniper keeps watch from its perch even when it has lost sight of the player.
+		if (this.sniperPhase == 3 && this.sniperNest != null && this.mob.blockPosition().distManhattan(this.sniperNest) <= 1) {
+			MobSpecials.holdPerch(this);
 			return;
 		}
 		Recovery.snack(this, level);
@@ -628,6 +696,7 @@ public final class SmartBrain {
 		if (this.combatCraftCooldown > 0) this.combatCraftCooldown--;
 		if (this.anvilCooldown > 0) this.anvilCooldown--;
 		if (this.supportCooldown > 0) this.supportCooldown--;
+		if (this.boatCooldown > 0) this.boatCooldown--;
 		if (this.rsCooldown > 0) this.rsCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
@@ -972,9 +1041,10 @@ public final class SmartBrain {
 	private void tickWall(ServerLevel level) {
 		if (this.wallIndex >= this.wallPlan.size() || this.blocks <= 0) {
 			this.wallPlan = null;
+			this.wallInterval = 4;
 			return;
 		}
-		if (this.mob.tickCount % 4 != 0) {
+		if (this.mob.tickCount % this.wallInterval != 0) {
 			return;
 		}
 		BlockPos p = this.wallPlan.get(this.wallIndex++);
@@ -982,7 +1052,11 @@ public final class SmartBrain {
 			this.wallPlan = null;
 			return;
 		}
-		this.place(level, p, this.wallState, true);
+		if (this.place(level, p, this.wallState, true) && this.bunker != null) {
+			this.bunker.add(p);
+			// Bunker blocks crumble away after a while.
+			com.mobsminecraft.world.TimedCleanup.scheduleBlock(level, p, this.wallState.getBlock(), 900);
+		}
 	}
 
 	void startTower(int count) {
@@ -1200,7 +1274,7 @@ public final class SmartBrain {
 		}
 		if (this.toolCraftTimer < 0) {
 			// Lost or never had a tool: plan to craft one.
-			this.toolCraftTimer = 200 + this.mob.getRandom().nextInt(400);
+			this.toolCraftTimer = 150 + this.mob.getRandom().nextInt(300);
 			return false;
 		}
 		if (this.toolCraftTimer > 0) {
@@ -1386,10 +1460,20 @@ public final class SmartBrain {
 			if (this.placeBlueprintBlock(level, p, s)) {
 				break;
 			}
+			// Blocked by a mob (or the player) standing there: try it again at the end, so walls get no holes.
+			BlockState now = level.getBlockState(p);
+			if (s != Outpost.DIG && now.canBeReplaced() && !now.is(s.getBlock()) && !level.isUnobstructed(s, p, net.minecraft.world.phys.shapes.CollisionContext.empty())) {
+				int tries = this.blueprintRetries.merge(p, 1, Integer::sum);
+				if (tries <= 6) {
+					this.housePlan.add(p);
+					this.houseStates.add(s);
+				}
+			}
 		}
 		if (this.houseIndex >= this.housePlan.size()) {
 			com.mobsminecraft.debug.AiStats.add("build_finished");
 			this.housePlan = null;
+			this.blueprintRetries.clear();
 			if (this.buildingOutpost) {
 				this.buildingOutpost = false;
 				this.outpostCooldown = 4800 + this.mob.getRandom().nextInt(4800);

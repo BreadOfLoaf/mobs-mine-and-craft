@@ -16,7 +16,8 @@ import net.minecraft.world.item.Items;
 
 /** A rare armoured variant of mobs that can wear armour: full diamond gear and extra health. */
 final class Juggernaut {
-	private static final String ROLLED_TAG = MobsMineAndCraft.MOD_ID + ".juggernaut_rolled";
+	static final String ROLLED_TAG = MobsMineAndCraft.MOD_ID + ".juggernaut_rolled";
+	static final String KNIGHTS_TAG = MobsMineAndCraft.MOD_ID + ".knights_spawned";
 	private static final Identifier HEALTH_BONUS = Identifier.fromNamespaceAndPath(MobsMineAndCraft.MOD_ID, "juggernaut_health");
 	private static final Identifier KNOCKBACK_BONUS = Identifier.fromNamespaceAndPath(MobsMineAndCraft.MOD_ID, "juggernaut_knockback");
 	private static final float CHANCE = 0.03F;
@@ -72,10 +73,22 @@ final class Juggernaut {
 	private static void equip(Mob mob, RandomSource r, EquipmentSlot slot, net.minecraft.world.item.Item item) {
 		ItemStack stack = new ItemStack(item);
 		if (mob.level() instanceof net.minecraft.server.level.ServerLevel level) {
-			stack = net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, stack, 25 + r.nextInt(16), level.registryAccess(), java.util.Optional.empty());
+			stack = capped(net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, stack, 15 + r.nextInt(11), level.registryAccess(), java.util.Optional.empty()));
 		}
 		mob.setItemSlot(slot, stack);
 		mob.setDropChance(slot, 0.0F);
+	}
+
+	/** Juggernaut gear tops out at level III enchantments. */
+	static ItemStack capped(ItemStack stack) {
+		net.minecraft.world.item.enchantment.EnchantmentHelper.updateEnchantments(stack, m -> {
+			for (var e : java.util.List.copyOf(m.keySet())) {
+				if (m.getLevel(e) > 3) {
+					m.set(e, 3);
+				}
+			}
+		});
+		return stack;
 	}
 
 	/** A copy of the item worn down to 15-60% durability. */
@@ -92,7 +105,7 @@ final class Juggernaut {
 	static ItemStack pickaxe(Mob mob, RandomSource r) {
 		ItemStack pick = new ItemStack(Items.DIAMOND_PICKAXE);
 		if (mob.level() instanceof net.minecraft.server.level.ServerLevel level) {
-			pick = net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, pick, 20 + r.nextInt(16), level.registryAccess(), java.util.Optional.empty());
+			pick = capped(net.minecraft.world.item.enchantment.EnchantmentHelper.enchantItem(r, pick, 15 + r.nextInt(11), level.registryAccess(), java.util.Optional.empty()));
 		}
 		return pick;
 	}

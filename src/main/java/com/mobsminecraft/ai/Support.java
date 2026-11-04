@@ -52,8 +52,12 @@ final class Support {
 
 		Mob recipient = null;
 		Holder<Potion> potion = null;
-		// An ally that fell back to be healed comes first, then the supporter itself, then anyone hurt.
+		// A knight's Juggernaut comes first, then an ally that fell back to be healed, the supporter itself, anyone hurt.
 		Mob asked = brain.healRequest;
+		if (brain.knightOf != null && brain.knightOf.isAlive() && brain.knightOf.getHealth() / brain.knightOf.getMaxHealth() < 0.8F
+			&& brain.knightOf.distanceTo(mob) < 16.0F) {
+			asked = brain.knightOf;
+		}
 		brain.healRequest = null;
 		if (asked != null && asked.isAlive() && asked.distanceTo(mob) < 16.0F && asked.getHealth() < asked.getMaxHealth()) {
 			recipient = asked;
@@ -95,9 +99,15 @@ final class Support {
 			com.mobsminecraft.debug.AiStats.add("support_self_heal");
 			return;
 		}
-		double dx = recipient.getX() - mob.getX();
-		double dy = recipient.getY() - mob.getY();
-		double dz = recipient.getZ() - mob.getZ();
+		// Not every throw is a good one: sometimes the potion lands on the player instead.
+		LivingEntity landsOn = recipient;
+		if (r.nextFloat() < 0.22F && mob.distanceTo(target) < 12.0F && mob.hasLineOfSight(target)) {
+			landsOn = target;
+			com.mobsminecraft.debug.AiStats.add("support_misthrow");
+		}
+		double dx = landsOn.getX() - mob.getX();
+		double dy = landsOn.getY() - mob.getY();
+		double dz = landsOn.getZ() - mob.getZ();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 		Projectile.spawnProjectileUsingShoot(thrown, level, stack, dx, dy + horiz * 0.2, dz, 0.75F, 2.0F);
 		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);

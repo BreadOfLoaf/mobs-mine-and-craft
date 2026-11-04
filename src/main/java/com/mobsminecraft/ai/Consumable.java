@@ -119,10 +119,10 @@ public enum Consumable {
 			}
 		}
 		if (r.nextFloat() < (passive ? 0.75F : 0.6F)) {
-			give(brain, POOL[r.nextInt(POOL.length)], r);
+			give(brain, fromPool(r), r);
 		}
 		if (r.nextFloat() < (passive ? 0.45F : 0.35F)) {
-			give(brain, POOL[r.nextInt(POOL.length)], r);
+			give(brain, fromPool(r), r);
 		}
 		if (r.nextFloat() < 0.15F) {
 			give(brain, ENDER_PEARL, r);
@@ -166,6 +166,15 @@ public enum Consumable {
 			default -> null;
 		};
 		brain.carried.add(new Carried(type, type.uses, potion));
+	}
+
+	/** A random consumable. Lava buckets are rare: about 1 in 150 rolls. */
+	private static Consumable fromPool(RandomSource r) {
+		Consumable c = POOL[r.nextInt(POOL.length)];
+		while (c == LAVA_BUCKET && r.nextFloat() < 0.9F) {
+			c = POOL[r.nextInt(POOL.length)];
+		}
+		return c;
 	}
 
 	private static <T> T pick(List<T> list, RandomSource r) {
@@ -325,6 +334,9 @@ public enum Consumable {
 	}
 
 	private static int usePearl(SmartBrain brain, ServerLevel level, Mob mob, LivingEntity target, double dist, boolean sight, float hp) {
+		if (brain.sniperPhase == 3) {
+			return 0; // a sniper stays on its perch
+		}
 		Vec3 aim;
 		if (hp < 0.35F) {
 			// Escape: throw away from the attacker.

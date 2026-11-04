@@ -132,6 +132,22 @@ public class Playtest implements ModInitializer {
 			}
 		}, mobs("villager", 2, "cow", 2, "sheep", 1), 3, Behaviour.SPECTATE));
 		add(new Scenario("prospect_solo", 1200, "One cow goes prospecting.", (run, o) -> {}, mobs("cow", 1), 3, Behaviour.SPECTATE));
+		add(new Scenario("villagers", 1200, "Villagers and an iron golem against zombies; spectator bot.", (run, o) -> {},
+			mobs("villager", 5, "iron_golem", 1, "zombie", 4), 6, Behaviour.SPECTATE));
+		add(new Scenario("herd", 1200, "A herd of cows and pigs next to a few monsters; spectator bot.", (run, o) -> {},
+			mobs("cow", 5, "pig", 3, "zombie", 2, "skeleton", 1), 4, Behaviour.SPECTATE));
+		add(new Scenario("brutes", 1200, "Piglin brutes among piglins (immune to zombifying); spectator bot.", (run, o) -> {},
+			mobs("piglin", 5, "piglin_brute", 2), 5, Behaviour.SPECTATE));
+		add(new Scenario("boats", 1200, "Bot floats in the middle of a lake; zombies on the shore.", (run, o) -> {
+			run.cmd("fill %d 117 %d %d 120 %d minecraft:water", o.getX() - 7, o.getZ() - 7, o.getX() + 7, o.getZ() + 7);
+			run.botStart = new Vec3(o.getX() + 0.5, 120.2, o.getZ() + 0.5);
+		}, mobs("zombie", 5), 10, Behaviour.STAND));
+		add(new Scenario("turret", 1200, "Engineer zombies, forced to build repeater-clock turrets.", (run, o) -> {},
+			mobs("zombie", 3), 9, Behaviour.STAND));
+		add(new Scenario("bunker", 900, "Hurt zombies seal themselves into bunkers to heal.", (run, o) -> {},
+			mobs("zombie", 4), 7, Behaviour.FIGHT));
+		add(new Scenario("sniper", 1500, "Sniper skeletons build towers; do they stay on top?", (run, o) -> {},
+			mobs("skeleton", 4), 15, Behaviour.STAND));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -418,12 +434,18 @@ public class Playtest implements ModInitializer {
 					case "gear" -> "crafter";
 					case "juggernaut" -> "juggernaut";
 					case "farm" -> "farmer";
+					case "turret" -> "clock";
+					case "bunker" -> "bunker";
+					case "sniper" -> "sniper";
 					default -> null;
 				};
 				for (Tracked t : this.tracked) {
 					var brain = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain();
 					if (force != null) {
 						brain.debugForce(force);
+					}
+					if (t.mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin piglin) {
+						piglin.setImmuneToZombification(true);
 					}
 					if (this.scenario.name().equals("retreat") && t.type.equals("zombie")) {
 						brain.debugForce("hurt");
@@ -551,6 +573,35 @@ public class Playtest implements ModInitializer {
 						((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugState()));
 				}
 			}
+			if (this.scenario.name().equals("turret")) {
+				BlockPos.MutableBlockPos q = new BlockPos.MutableBlockPos();
+				for (int dx = -30; dx <= 30; dx++) for (int dz = -30; dz <= 30; dz++) for (int dy = 0; dy <= 4; dy++) {
+					q.set(this.origin.getX() + dx, 120 + dy, this.origin.getZ() + dz);
+					if (this.level.getBlockEntity(q) instanceof net.minecraft.world.level.block.entity.DispenserBlockEntity d) {
+						int n = 0;
+						for (int i = 0; i < d.getContainerSize(); i++) n += d.getItem(i).getCount();
+						var st = this.level.getBlockState(q);
+						AiStats.add(String.format(Locale.ROOT, "dispenser_ammo_%d_facing_%s_bot_%.0f,%.0f", n, st.getValue(net.minecraft.world.level.block.DispenserBlock.FACING),
+							this.bot.player.getX() - q.getX() - 0.5, this.bot.player.getZ() - q.getZ() - 0.5));
+					}
+				}
+			}
+			if (this.scenario.name().equals("sniper")) {
+				for (Tracked t : this.tracked) {
+					AiStats.add(String.format(Locale.ROOT, "end_%s_y%d", ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugPerched() ? "perched" : "ground",
+						(int) t.mob.getY() - 121));
+				}
+			}
+			if (this.scenario.name().equals("juggernaut")) {
+				for (Mob m : this.level.getEntitiesOfClass(Mob.class, new AABB(this.origin).inflate(45), m -> m.isAlive())) {
+					for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+						var ench = m.getItemBySlot(slot).getEnchantments();
+						for (var e : ench.keySet()) {
+							AiStats.add("ench_level_" + ench.getLevel(e));
+						}
+					}
+				}
+			}
 			if (this.scenario.name().equals("gear") || this.scenario.name().equals("juggernaut") || this.scenario.name().equals("shields")) {
 				for (Tracked t : this.tracked) {
 					StringBuilder eq = new StringBuilder();
@@ -563,7 +614,7 @@ public class Playtest implements ModInitializer {
 					sb.append(String.format(Locale.ROOT, "  gear %-9s alive=%s %s%n", t.type, t.mob.isAlive(), eq));
 				}
 			}
-			sb.append("AI actions: ").append(stats.isEmpty() ? "none" : stats.toString()).append('\n');
+			sb.append("AI actions: ").append(AiStats.snapshot().isEmpty() ? "none" : AiStats.snapshot().toString()).append('\n');
 			String report = sb.toString();
 			LOG.info("\n{}", report);
 			write(this.server, String.format(Locale.ROOT, "%02d-%s", this.index, this.scenario.name()), report);

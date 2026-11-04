@@ -41,7 +41,7 @@ final class CombatCrafting {
 				return false;
 			}
 			RandomSource r = mob.getRandom();
-			brain.combatCraftCooldown = 250 + r.nextInt(350);
+			brain.combatCraftCooldown = 180 + r.nextInt(300);
 			boolean playerAbove = target.getY() - mob.getY() > 2.5;
 			if (playerAbove && brain.ladders == 0) {
 				brain.crafting = Craft.LADDERS;
@@ -52,7 +52,8 @@ final class CombatCrafting {
 				brain.crafting = Craft.GEAR;
 			} else {
 				int roll = r.nextInt(100);
-				brain.crafting = roll < 40 ? Craft.ANVILS : roll < 46 ? Craft.LAVA_BUCKET : roll < 64 ? Craft.WATER_BUCKET : Craft.LADDERS;
+				// Anvils are rare now, lava buckets rarer still.
+				brain.crafting = roll < 8 ? Craft.ANVILS : roll < 9 ? Craft.LAVA_BUCKET : roll < 40 ? Craft.WATER_BUCKET : Craft.LADDERS;
 			}
 			brain.craftTicks = 0;
 			if (brain.crafting == Craft.ENCHANT) {
@@ -152,13 +153,13 @@ final class CombatCrafting {
 			return;
 		}
 		RandomSource r = mob.getRandom();
-		brain.anvilCooldown = 80 + r.nextInt(60);
+		brain.anvilCooldown = 300 + r.nextInt(300);
 		BlockPos head = BlockPos.containing(target.position().add(target.getKnownMovement().multiply(2.0, 0.0, 2.0)));
 		int dropped = 0;
 		if (dropOver(level, head, r)) {
 			dropped++;
 		}
-		if (brain.anvils >= 3 && r.nextFloat() < 0.35F) {
+		if (brain.anvils >= 3 && r.nextFloat() < 0.1F) {
 			for (int i = 0; i < 2; i++) {
 				if (dropOver(level, head.relative(Direction.Plane.HORIZONTAL.getRandomDirection(r)), r)) {
 					dropped++;

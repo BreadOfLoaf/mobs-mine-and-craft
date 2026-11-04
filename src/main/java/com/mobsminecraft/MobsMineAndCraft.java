@@ -25,6 +25,17 @@ public class MobsMineAndCraft implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ServerTickEvents.END_LEVEL_TICK.register(TimedCleanup::tick);
+		// Mob-built blocks are saved with the world: every few minutes and when the server stops.
+		ServerTickEvents.END_LEVEL_TICK.register(level -> {
+			if (level.getGameTime() % 6000 == 0) {
+				com.mobsminecraft.world.MobBuilt.save(level);
+			}
+		});
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			for (ServerLevel level : server.getAllLevels()) {
+				com.mobsminecraft.world.MobBuilt.save(level);
+			}
+		});
 
 		// Skeletons shoot "enchanted" arrows most of the time.
 		ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
@@ -53,9 +64,11 @@ public class MobsMineAndCraft implements ModInitializer {
 			holder.mmc$getBrain().dropInventory(level);
 			if (entity instanceof AbstractSkeleton skeleton && holder.mmc$getBrain().isBowEnchanted()) {
 				ItemStack bow = skeleton.getMainHandItem();
-				if (bow.is(Items.BOW) && level.getRandom().nextFloat() < 0.4F) {
+				float roll = level.getRandom().nextFloat();
+				if (bow.is(Items.BOW) && roll < 0.4F) {
 					ItemStack drop = bow.copy();
-					drop.setDamageValue(drop.getMaxDamage() / 2);
+					// Usually worn to half durability; now and then good as new.
+					drop.setDamageValue(roll < 0.07F ? 0 : drop.getMaxDamage() / 2);
 					skeleton.spawnAtLocation(level, drop);
 				}
 			}
@@ -69,6 +82,15 @@ public class MobsMineAndCraft implements ModInitializer {
 			return;
 		}
 		arrow.setCritArrow(true);
+		// Any kind of tipped arrow, even helpful ones (a lucky player gets healed or sped up).
+		if (arrow instanceof Arrow tipped && r.nextFloat() < 0.45F && arrow.level() instanceof ServerLevel sl) {
+			var potions = sl.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.POTION).listElements().toList();
+			var potion = potions.get(r.nextInt(potions.size()));
+			for (MobEffectInstance e : new net.minecraft.world.item.alchemy.PotionContents(potion).getAllEffects()) {
+				tipped.addEffect(new MobEffectInstance(e.getEffect(), Math.max(1, e.getDuration() / 8), e.getAmplifier()));
+			}
+			return;
+		}
 		switch (r.nextInt(5)) {
 			case 0 -> arrow.igniteForSeconds(100.0F);
 			case 1 -> addEffect(arrow, new MobEffectInstance(MobEffects.SLOWNESS, 100, 1));

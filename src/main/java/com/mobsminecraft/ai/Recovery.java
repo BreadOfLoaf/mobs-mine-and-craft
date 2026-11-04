@@ -131,7 +131,14 @@ final class Recovery {
 		mob.setSprinting(false);
 		if (!brain.recoverWalled && griefing && mob.onGround() && mob.distanceTo(target) < 16.0F) {
 			brain.recoverWalled = true;
-			brain.planWall(level, target, 1, 1, 2, brain.buildState(), false);
+			if (brain.forceBunker || mob.getRandom().nextFloat() < 0.45F) {
+				// Seal itself in completely: walls all round and a roof.
+				brain.forceBunker = false;
+				planBunker(brain, mob.blockPosition());
+				com.mobsminecraft.debug.AiStats.add("bunker");
+			} else {
+				brain.planWall(level, target, 1, 1, 2, brain.buildState(), false);
+			}
 		}
 		brain.holdStill();
 		// Catch its breath a little while hiding.
@@ -194,7 +201,56 @@ final class Recovery {
 		level.sendParticles(new ItemParticleOption(ParticleTypes.ITEM, food.getItem()), mob.getX(), mob.getEyeY() - 0.2, mob.getZ(), 8, 0.2, 0.1, 0.2, 0.05);
 	}
 
+	private static void planBunker(SmartBrain brain, BlockPos feet) {
+		Mob mob = brain.mob;
+		mob.setPos(feet.getX() + 0.5, mob.getY(), feet.getZ() + 0.5);
+		List<BlockPos> plan = new java.util.ArrayList<>();
+		int h = brain.height();
+		for (int y = 0; y < h; y++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				for (int dz = -1; dz <= 1; dz++) {
+					if (dx != 0 || dz != 0) {
+						plan.add(feet.offset(dx, y, dz));
+					}
+				}
+			}
+		}
+		for (int dx = -1; dx <= 1; dx++) {
+			for (int dz = -1; dz <= 1; dz++) {
+				plan.add(feet.offset(dx, h, dz));
+			}
+		}
+		brain.wallPlan = plan;
+		brain.wallState = brain.buildState();
+		brain.wallIndex = 0;
+		brain.wallInterval = 1;
+		brain.bunker = new java.util.ArrayList<>();
+	}
+
+	/** Bursts out of its bunker toward the player. */
+	private static void breakOut(SmartBrain brain, ServerLevel level) {
+		if (brain.bunker == null) {
+			return;
+		}
+		Mob mob = brain.mob;
+		BlockPos feet = mob.blockPosition();
+		LivingEntity from = brain.recoverFrom;
+		net.minecraft.core.Direction d = from == null ? mob.getDirection()
+			: net.minecraft.core.Direction.getApproximateNearest(from.getX() - mob.getX(), 0.0, from.getZ() - mob.getZ());
+		for (int y = 0; y < brain.height(); y++) {
+			BlockPos p = feet.relative(d).above(y);
+			if (brain.bunker.contains(p)) {
+				level.destroyBlock(p, false, mob);
+			}
+		}
+		brain.bunker = null;
+		brain.wallPlan = null;
+		brain.wallInterval = 4;
+		com.mobsminecraft.debug.AiStats.add("bunker_break_out");
+	}
+
 	private static void end(SmartBrain brain, ServerLevel level, boolean healed) {
+		breakOut(brain, level);
 		brain.recovering = false;
 		if (brain.recoverFrom != null && brain.recoverFrom.isAlive() && SmartBrain.isValidTarget(brain.recoverFrom)) {
 			brain.mob.setTarget(brain.recoverFrom);

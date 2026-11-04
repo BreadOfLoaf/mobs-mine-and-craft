@@ -47,38 +47,74 @@ final class Furnaces {
 		}
 	}
 
-	/** Fills a chest with some mining loot (outpost supply chests). */
-	static void fillSupplyChest(ServerLevel level, BlockPos pos, RandomSource r) {
-		if (!(level.getBlockEntity(pos) instanceof Container chest)) {
-			return;
+	/** One possible stack in a chest: the item, how many (min-max), and how likely it is. */
+	private record Loot(Item item, int min, int max, float weight) {}
+
+	private static Loot loot(Item item, int min, int max, float weight) {
+		return new Loot(item, min, max, weight);
+	}
+
+	/** Mining outposts and mineshafts: what a miner keeps around. */
+	private static final Loot[] SUPPLY = {
+		loot(Items.COAL, 3, 14, 10), loot(Items.TORCH, 4, 16, 9), loot(Items.COBBLESTONE, 8, 32, 8), loot(Items.STICK, 2, 9, 7),
+		loot(Items.RAW_IRON, 1, 6, 6), loot(Items.RAW_COPPER, 2, 9, 5), loot(Items.OAK_PLANKS, 4, 16, 6), loot(Items.BREAD, 1, 4, 5),
+		loot(Items.FLINT, 1, 4, 4), loot(Items.RAIL, 2, 8, 4), loot(Items.IRON_NUGGET, 2, 8, 3), loot(Items.STONE_PICKAXE, 1, 1, 3),
+		loot(Items.WOODEN_PICKAXE, 1, 1, 2), loot(Items.LADDER, 2, 8, 3), loot(Items.GRAVEL, 4, 12, 3), loot(Items.IRON_INGOT, 1, 3, 2),
+		loot(Items.REDSTONE, 2, 8, 2), loot(Items.LAPIS_LAZULI, 1, 5, 1.5F), loot(Items.RAW_GOLD, 1, 3, 1), loot(Items.DIAMOND, 1, 1, 0.3F),
+	};
+
+	/** Houses: food, farming, crafting odds and ends, the odd bit of treasure. */
+	private static final Loot[] HOUSEHOLD = {
+		loot(Items.STICK, 2, 10, 9), loot(Items.OAK_PLANKS, 3, 12, 7), loot(Items.OAK_LOG, 1, 6, 6), loot(Items.WHEAT_SEEDS, 2, 12, 8),
+		loot(Items.WHEAT, 2, 9, 6), loot(Items.BREAD, 1, 4, 6), loot(Items.APPLE, 1, 4, 6), loot(Items.CARROT, 1, 6, 4), loot(Items.POTATO, 1, 6, 4),
+		loot(Items.COAL, 1, 7, 6), loot(Items.TORCH, 2, 8, 5), loot(Items.STRING, 1, 5, 4), loot(Items.FEATHER, 1, 5, 3), loot(Items.LEATHER, 1, 4, 3),
+		loot(Items.BONE, 1, 4, 3), loot(Items.FLINT, 1, 3, 3), loot(Items.COBBLESTONE, 4, 16, 4), loot(Items.WOODEN_AXE, 1, 1, 2),
+		loot(Items.WOODEN_HOE, 1, 1, 2), loot(Items.STONE_SHOVEL, 1, 1, 2), loot(Items.BOWL, 1, 3, 2), loot(Items.PAPER, 1, 4, 2),
+		loot(Items.BOOK, 1, 2, 1.5F), loot(Items.COOKED_BEEF, 1, 3, 2), loot(Items.COOKED_PORKCHOP, 1, 3, 2), loot(Items.EGG, 1, 4, 2),
+		loot(Items.SUGAR_CANE, 1, 5, 2), loot(Items.IRON_NUGGET, 1, 6, 1.5F), loot(Items.IRON_INGOT, 1, 2, 1),
+		loot(Items.BUCKET, 1, 1, 1), loot(Items.EMERALD, 1, 2, 0.5F),
+	};
+
+	private static Loot pick(Loot[] table, RandomSource r) {
+		float total = 0;
+		for (Loot l : table) total += l.weight();
+		float roll = r.nextFloat() * total;
+		for (Loot l : table) {
+			roll -= l.weight();
+			if (roll <= 0) return l;
 		}
-		HopperBlockEntity.addItem(null, chest, new ItemStack(Items.COAL, 4 + r.nextInt(9)), null);
-		HopperBlockEntity.addItem(null, chest, new ItemStack(Items.TORCH, 8 + r.nextInt(9)), null);
-		HopperBlockEntity.addItem(null, chest, new ItemStack(Items.RAW_IRON, 1 + r.nextInt(5)), null);
-		HopperBlockEntity.addItem(null, chest, new ItemStack(Items.BREAD, 1 + r.nextInt(3)), null);
-		if (r.nextFloat() < 0.15F) {
-			HopperBlockEntity.addItem(null, chest, new ItemStack(Items.DIAMOND, 1), null);
+		return table[0];
+	}
+
+	/** Puts a few stacks from the table into random slots, with worn-down tools. */
+	private static void fill(Container chest, Loot[] table, int stacks, RandomSource r) {
+		for (int i = 0; i < stacks; i++) {
+			Loot l = pick(table, r);
+			ItemStack stack = new ItemStack(l.item(), l.min() + r.nextInt(l.max() - l.min() + 1));
+			if (stack.isDamageableItem()) {
+				stack.setDamageValue(r.nextInt(Math.max(1, stack.getMaxDamage() * 3 / 4)));
+			}
+			int slot = r.nextInt(chest.getContainerSize());
+			for (int tries = 0; tries < 10 && !chest.getItem(slot).isEmpty(); tries++) {
+				slot = r.nextInt(chest.getContainerSize());
+			}
+			if (chest.getItem(slot).isEmpty()) {
+				chest.setItem(slot, stack);
+			}
 		}
 	}
 
-	private static final Item[] HOUSEHOLD = {
-		Items.BREAD, Items.WHEAT, Items.CARROT, Items.POTATO, Items.APPLE, Items.WHEAT_SEEDS, Items.COAL, Items.TORCH,
-		Items.STRING, Items.BONE, Items.LEATHER, Items.BOOK, Items.PAPER, Items.STICK, Items.FEATHER, Items.COOKED_BEEF,
-		Items.IRON_INGOT, Items.FLINT, Items.SUGAR_CANE, Items.EGG,
-	};
+	/** Fills a chest with mining supplies (outpost and mineshaft chests). */
+	static void fillSupplyChest(ServerLevel level, BlockPos pos, RandomSource r) {
+		if (level.getBlockEntity(pos) instanceof Container chest) {
+			fill(chest, SUPPLY, 3 + r.nextInt(5), r);
+		}
+	}
 
-	/** Fills a house chest or barrel with a few random household items. */
+	/** Fills a house chest or barrel with a mix of household things. */
 	static void fillHouseChest(ServerLevel level, BlockPos pos, RandomSource r) {
-		if (!(level.getBlockEntity(pos) instanceof Container chest)) {
-			return;
-		}
-		int stacks = 2 + r.nextInt(4);
-		for (int i = 0; i < stacks; i++) {
-			Item item = HOUSEHOLD[r.nextInt(HOUSEHOLD.length)];
-			HopperBlockEntity.addItem(null, chest, new ItemStack(item, 1 + r.nextInt(Math.min(8, item.getDefaultMaxStackSize()))), null);
-		}
-		if (r.nextFloat() < 0.08F) {
-			HopperBlockEntity.addItem(null, chest, new ItemStack(Items.EMERALD, 1 + r.nextInt(3)), null);
+		if (level.getBlockEntity(pos) instanceof Container chest) {
+			fill(chest, HOUSEHOLD, 3 + r.nextInt(6), r);
 		}
 	}
 
