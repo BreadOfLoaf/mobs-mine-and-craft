@@ -44,7 +44,7 @@ public class Playtest implements ModInitializer {
 	/** One test setup: arena tweaks, mobs to spawn, and how the bot behaves. */
 	record Scenario(String name, int ticks, String description, BiConsumer<Run, BlockPos> setup, Map<String, Integer> mobs, double ring, Behaviour bot) {}
 
-	enum Behaviour { STAND, FIGHT, KITE, SPECTATE, PLAYER }
+	enum Behaviour { STAND, FIGHT, KITE, SPECTATE, PLAYER, CIRCLE }
 
 	static final Map<String, Scenario> SCENARIOS = new LinkedHashMap<>();
 
@@ -214,6 +214,16 @@ public class Playtest implements ModInitializer {
 			mobs("wolf", 4), 3, Behaviour.FIGHT));
 		add(new Scenario("role_world_calm", 9600, "Survival world plus 2 zombies of each working personality (no imposters or griefers to kill them off).",
 			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		add(new Scenario("roles_near", 2400, "A bot walks circles near 2 engineers, minemen, builders, crafters and griefers plus 4 tacticians; ore in the ground, player huts around.",
+			(run, o) -> {
+				java.util.Random rnd = new java.util.Random(o.getX());
+				for (int i = 0; i < 200; i++) {
+					run.cmd("setblock %d %d %d minecraft:%s", o.getX() - 25 + rnd.nextInt(51), 113 + rnd.nextInt(6), o.getZ() - 25 + rnd.nextInt(51), rnd.nextBoolean() ? "iron_ore" : "coal_ore");
+				}
+				for (int i = 0; i < 3; i++) {
+					run.cmd("fill %d 121 %d %d 123 %d minecraft:oak_planks hollow", o.getX() - 14 + i * 12, o.getZ() + 14, o.getX() - 10 + i * 12, o.getZ() + 18);
+				}
+			}, mobs("zombie", 12, "skeleton", 2), 16, Behaviour.CIRCLE));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -560,6 +570,23 @@ public class Playtest implements ModInitializer {
 						this.bot.walkToward(this.bot.player.position().add(10, 0, 0), 0.08);
 					}
 				}
+				case CIRCLE -> {
+					// Walks a circle around the arena centre like a player going about their business; swings at anything close.
+					double a = this.ticks * 0.004;
+					Vec3 c = Vec3.atBottomCenterOf(this.origin.above());
+					this.bot.walkToward(c.add(Math.cos(a) * 9, 0, Math.sin(a) * 9), 0.15);
+					if (this.ticks % 15 == 0) {
+						for (Tracked t : this.tracked) {
+							if (t.mob.isAlive() && t.mob.distanceTo(this.bot.player) < 3.0) {
+								this.bot.attack(t.mob);
+								break;
+							}
+						}
+					}
+					if (this.ticks % 100 == 0) {
+						this.takeCensus();
+					}
+				}
 				case PLAYER -> {
 					this.survivalBot.tick();
 					if (this.ticks % 200 == 0) {
@@ -651,6 +678,8 @@ public class Playtest implements ModInitializer {
 						case "hero" -> brain.debugPersonality("hero");
 						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
 						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
+						case "roles_near" -> brain.debugPersonality(t.type.equals("skeleton") ? "tactician"
+							: new String[] {"engineer", "engineer", "mineman", "mineman", "builder", "builder", "crafter", "crafter", "griefer", "griefer", "tactician", "tactician"}[pi++]);
 						case "anvil_warn" -> { brain.debugPersonality("tactician"); brain.debugForce("anvils"); }
 						case "gifters" -> brain.debugPersonality("gifter");
 						case "roles" -> brain.debugPersonality(new String[] {"builder", "crafter", "engineer", "mineman"}[pi++ % 4]);
@@ -859,6 +888,16 @@ public class Playtest implements ModInitializer {
 						}
 					}
 					sb.append(String.format(Locale.ROOT, "  gear %-9s alive=%s %s%n", t.type, t.mob.isAlive(), eq));
+				}
+			}
+			if (this.scenario.bot() == Behaviour.CIRCLE) {
+				sb.append("What each personality was doing (samples every 5 s):\n");
+				for (Map.Entry<String, Map<String, Integer>> e : this.activityByPersona.entrySet()) {
+					int total = e.getValue().values().stream().mapToInt(Integer::intValue).sum();
+					StringBuilder line = new StringBuilder();
+					e.getValue().entrySet().stream().sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+						.forEach(x -> line.append(String.format(Locale.ROOT, " %s %.0f%%", x.getKey(), 100.0 * x.getValue() / total)));
+					sb.append(String.format(Locale.ROOT, "  %-10s (%3d samples):%s%n", e.getKey(), total, line));
 				}
 			}
 			if (this.scenario.bot() == Behaviour.PLAYER) {

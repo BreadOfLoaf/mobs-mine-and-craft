@@ -278,6 +278,11 @@ public final class SmartBrain {
 	final java.util.Map<java.util.UUID, Integer> crafterGiven = new java.util.HashMap<>();
 	int crafterMade;
 	int craftDisengage;
+	int mineCooldown;
+	Vec3 builderSpot;
+	int builderSpotTicks;
+	int builderWallHeight;
+	int builderWallCooldown;
 	Vec3 stuckCheckPos;
 	int stuckIdleTicks;
 	Mob escortOf;
@@ -538,7 +543,7 @@ public final class SmartBrain {
 			return false;
 		}
 		Personality p = this.personality;
-		if (p.peaceful() || p == Personality.ENGINEER) {
+		if (p.peaceful() || p == Personality.ENGINEER || p == Personality.GRIEFER) {
 			return true;
 		}
 		if (p.busyWithRole()) {
@@ -867,7 +872,7 @@ public final class SmartBrain {
 			return;
 		}
 		// Griefers wreck things whether or not there's a fight on.
-		if (Griefer.grieves(this) && (this.digTarget == null || this.griefFleeFrom != null)) {
+		if (Griefer.grieves(this)) {
 			if (Griefer.tick(this, level, target) && this.griefFleeFrom != null) {
 				return;
 			}
@@ -1028,6 +1033,8 @@ public final class SmartBrain {
 		if (this.boatCooldown > 0) this.boatCooldown--;
 		if (this.crafterCooldown > 0 && this.crafterCooldown != Integer.MAX_VALUE) this.crafterCooldown--;
 		if (this.idleCraftCooldown > 0) this.idleCraftCooldown--;
+		if (this.mineCooldown > 0) this.mineCooldown--;
+		if (this.builderWallCooldown > 0) this.builderWallCooldown--;
 		if (this.imposterCooldown > 0) this.imposterCooldown--;
 		if (this.imposterUtilityCooldown > 0) this.imposterUtilityCooldown--;
 		if (this.giftCooldown > 0) this.giftCooldown--;
@@ -2001,6 +2008,10 @@ public final class SmartBrain {
 			return true;
 		}
 
+		// Crafters and engineers stick to their job instead of going off to dig.
+		if (this.personality == Personality.CRAFTER || this.personality == Personality.ENGINEER) {
+			return false;
+		}
 		RandomSource r = this.mob.getRandom();
 		BlockPos here = this.mob.blockPosition();
 		if (this.oreCooldown == 0) {

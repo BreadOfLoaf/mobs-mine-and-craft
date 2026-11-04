@@ -43,6 +43,7 @@ final class Personalities {
 			case HERO -> hero(b, level, target, griefing);
 			case ENGINEER -> engineer(b, level, target, griefing);
 			case CRAFTER -> crafter(b, level, target, griefing);
+			case BUILDER -> builderFight(b, level, griefing);
 			default -> false;
 		};
 	}
@@ -155,8 +156,8 @@ final class Personalities {
 	/** Keeps away from players, mines ore, lights the way with torches and stashes the ore in a chest. */
 	private static boolean mineman(SmartBrain b, ServerLevel level, boolean griefing) {
 		Mob mob = b.mob;
-		Player player = nearestPlayer(level, mob, 12.0);
-		if (player != null && keepAway(b, player, 12.0, true)) {
+		LivingEntity hitBy = mob.getLastHurtByMob();
+		if (hitBy instanceof Player attacker && mob.tickCount - mob.getLastHurtByMobTimestamp() < 60 && keepAway(b, attacker, 8.0, true)) {
 			return true;
 		}
 		if (!griefing) {
@@ -421,6 +422,13 @@ final class Personalities {
 			b.walkTo(target.position(), b.walkSpeed());
 			return true;
 		}
+		// Drops a landmine behind itself now and then: a TNT block set into the ground under a stone pressure plate.
+		if (b.mineCooldown <= 0 && griefing && mob.onGround()) {
+			b.mineCooldown = 60 + mob.getRandom().nextInt(60);
+			if (layMine(b, level, target)) {
+				return true;
+			}
+		}
 		// Orbit: a point a little way round the circle at about 10 blocks.
 		if (mob.getRandom().nextInt(200) == 0) {
 			b.orbitDir = -b.orbitDir;
@@ -435,6 +443,34 @@ final class Personalities {
 		if (mob.tickCount % 100 == 0) {
 			com.mobsminecraft.debug.AiStats.add("engineer_orbit");
 		}
+		return true;
+	}
+
+	/** A pressure-plate mine one block behind the engineer (on the side away from where it's heading). */
+	private static boolean layMine(SmartBrain b, ServerLevel level, LivingEntity target) {
+		Mob mob = b.mob;
+		Vec3 heading = mob.getDeltaMovement().multiply(1.0, 0.0, 1.0);
+		if (heading.lengthSqr() < 1.0E-4) {
+			heading = mob.position().subtract(target.position()).multiply(1.0, 0.0, 1.0);
+		}
+		if (heading.lengthSqr() < 1.0E-4) {
+			return false;
+		}
+		Direction back = Direction.getApproximateNearest(-heading.x, 0.0, -heading.z);
+		BlockPos plate = mob.blockPosition().relative(back);
+		BlockPos ground = plate.below();
+		var gs = level.getBlockState(ground);
+		if (!level.getBlockState(plate).canBeReplaced() || !level.getFluidState(plate).isEmpty() || !BlockWork.isNatural(level, ground, gs)
+			|| !BlockWork.blocksMovement(level, ground) || target.distanceTo(mob) < 3.0F) {
+			return false;
+		}
+		level.setBlock(ground, Blocks.TNT.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+		level.setBlock(plate, Blocks.STONE_PRESSURE_PLATE.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);
+		level.playSound(null, plate, SoundEvents.STONE_PLACE, SoundSource.HOSTILE, 0.6F, 1.2F);
+		mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
+		// Unexploded mines are cleared away after a few minutes.
+		com.mobsminecraft.world.TimedCleanup.scheduleBlock(level, plate, Blocks.STONE_PRESSURE_PLATE, 6000);
+		com.mobsminecraft.debug.AiStats.add("engineer_mine");
 		return true;
 	}
 
@@ -508,6 +544,95 @@ final class Personalities {
 		return true;
 	}
 
+	// ------------------------------------------------------------------ builder in a fight
+
+	/**
+	 * A builder in a fight builds for its side: waist-high cover in front of an archer (it can shoot over it),
+	 * a barricade across the player's way to its allies, or cover for itself. Returns true while busy.
+	 */
+	private static boolean builderFight(SmartBrain b, ServerLevel level, boolean griefing) {
+		Mob mob = b.mob;
+		Player player = nearestPlayer(level, mob, 24.0);
+		if (b.wallPlan != null) {
+			// The wall gets laid by the brain's wall step this tick; just stay put.
+			b.holdStill();
+			return false;
+		}
+		if (!griefing || player == null || !(mob instanceof Enemy)) {
+			return false;
+		}
+		if (b.builderSpot != null) {
+			// Walk over to where the wall goes, then lay it.
+			if (mob.position().distanceToSqr(b.builderSpot) > 9.0 && ++b.builderSpotTicks < 100) {
+				b.walkTo(b.builderSpot, b.walkSpeed());
+				return true;
+			}
+			planWallAt(b, level, BlockPos.containing(b.builderSpot), player, b.builderWallHeight);
+			b.builderSpot = null;
+			return true;
+		}
+		if (b.builderWallCooldown > 0) {
+			return false;
+		}
+		RandomSource r = mob.getRandom();
+		b.builderWallCooldown = 100 + r.nextInt(80);
+		// 1. Cover for an archer.
+		Mob archer = null;
+		for (Mob m : level.getEntitiesOfClass(Mob.class, mob.getBoundingBox().inflate(16.0), m -> m != mob && m.isAlive()
+			&& m instanceof net.minecraft.world.entity.monster.RangedAttackMob && m instanceof Enemy && m.distanceTo(player) > 6.0F)) {
+			if (archer == null || m.distanceToSqr(mob) < archer.distanceToSqr(mob)) archer = m;
+		}
+		Vec3 spot;
+		int height;
+		String kind;
+		if (archer != null) {
+			Vec3 toPlayer = player.position().subtract(archer.position()).multiply(1.0, 0.0, 1.0).normalize();
+			spot = archer.position().add(toPlayer.scale(2.0));
+			height = 1;
+			kind = "builder_archer_cover";
+		} else {
+			// 2. A barricade across the player's way to the nearest allies (or to the builder itself).
+			Vec3 toPlayer = player.position().subtract(mob.position()).multiply(1.0, 0.0, 1.0);
+			if (toPlayer.lengthSqr() < 9.0) {
+				return false;
+			}
+			spot = mob.position().add(toPlayer.normalize().scale(Math.min(4.0, toPlayer.length() / 2)));
+			height = 2;
+			kind = "builder_barricade";
+		}
+		b.builderSpot = spot;
+		b.builderSpotTicks = 0;
+		b.builderWallHeight = height;
+		com.mobsminecraft.debug.AiStats.add(kind);
+		return true;
+	}
+
+	/** A 5-wide wall at {@code center}, facing the player, {@code height} blocks high (waist-high walls get end posts). */
+	private static void planWallAt(SmartBrain b, ServerLevel level, BlockPos center, Player player, int height) {
+		Vec3 d = player.position().subtract(Vec3.atCenterOf(center));
+		Direction facing = Direction.getApproximateNearest(d.x, 0.0, d.z);
+		Direction side = facing.getClockWise();
+		java.util.List<BlockPos> plan = new java.util.ArrayList<>();
+		java.util.List<BlockPos> bases = new java.util.ArrayList<>();
+		for (int i = -2; i <= 2; i++) {
+			BlockPos col = center.relative(side, i);
+			if (BlockWork.blocksMovement(level, col)) col = col.above();
+			else if (!BlockWork.isFloor(level, col.below())) col = col.below();
+			bases.add(col);
+		}
+		for (int y = 0; y < height; y++) {
+			for (BlockPos base : bases) plan.add(base.above(y));
+		}
+		if (height == 1) {
+			plan.add(bases.get(0).above());
+			plan.add(bases.get(bases.size() - 1).above());
+		}
+		b.wallPlan = plan;
+		b.wallState = b.buildState();
+		b.wallIndex = 0;
+		b.wallInterval = 2;
+	}
+
 	// ------------------------------------------------------------------ crafter
 
 	/**
@@ -519,14 +644,14 @@ final class Personalities {
 		if (b.crafterItem != null) {
 			return deliver(b, level);
 		}
-		if (b.crafterTicks == 0 && keepAway(b, target != null ? target : nearestPlayer(level, mob, 8.0), 8.0, true)) {
+		if (b.crafterTicks == 0 && keepAway(b, target != null ? target : nearestPlayer(level, mob, 4.0), 4.0, true)) {
 			return true;
 		}
 		if (b.crafterTicks == 0) {
 			if (b.crafterCooldown > 0 || !mob.onGround()) {
 				return false;
 			}
-			b.crafterCooldown = 100 + mob.getRandom().nextInt(140);
+			b.crafterCooldown = 60 + mob.getRandom().nextInt(80);
 			Mob ally = needyAlly(level, mob);
 			if (ally == null) {
 				// Nobody around to craft for: work on its own kit instead.
@@ -554,7 +679,7 @@ final class Personalities {
 			mob.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT);
 			level.playSound(null, mob.blockPosition(), SoundEvents.WOOD_HIT, SoundSource.NEUTRAL, 0.8F, 1.0F);
 		}
-		if (b.crafterTicks < 40) {
+		if (b.crafterTicks < 30) {
 			return true;
 		}
 		b.crafterTicks = 0;
@@ -586,7 +711,8 @@ final class Personalities {
 			b.crafterTicks = 0;
 			return false;
 		}
-		if (mob.distanceTo(ally) > 2.5F) {
+		// Close enough to toss it over (allies in a fight don't stand still for long).
+		if (mob.distanceTo(ally) > 5.0F || !mob.hasLineOfSight(ally)) {
 			b.walkTo(ally.position(), b.walkSpeed() * 1.2);
 			return true;
 		}
@@ -607,10 +733,7 @@ final class Personalities {
 			Inventory.store(((com.mobsminecraft.SmartMobHolder) ally).mmc$getBrain(), item);
 		}
 		com.mobsminecraft.debug.AiStats.add("crafter_gave:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item.getItem()).getPath());
-		if (++b.crafterMade >= 8) {
-			b.crafterMade = 0;
-			b.crafterCooldown = 2400 + mob.getRandom().nextInt(2400);
-		}
+
 		return true;
 	}
 

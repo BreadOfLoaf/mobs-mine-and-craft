@@ -69,7 +69,7 @@ final class RedstoneTraps {
 			return false;
 		}
 		RandomSource r = mob.getRandom();
-		brain.rsCooldown = specialist ? 160 + r.nextInt(160) : 400 + r.nextInt(300);
+		brain.rsCooldown = specialist ? 100 + r.nextInt(100) : 400 + r.nextInt(300);
 		Vec3 d = target.position().subtract(mob.position());
 		Direction dir = Direction.getApproximateNearest(d.x, 0.0, d.z);
 		// Dispensers only reach about 11 blocks; farther away, send a TNT cart down a track instead.
@@ -82,11 +82,17 @@ final class RedstoneTraps {
 			return true;
 		}
 		int roll = r.nextInt(100);
+		boolean planned = false;
 		Kind first = roll < 45 ? Kind.ARROWS : roll < 80 ? Kind.FIRE_CHARGES : Kind.TNT_CART;
 		if (first == Kind.TNT_CART && planCart(brain, level, dir, r)) {
 			return true;
 		}
-		return planDispenser(brain, level, dir, first == Kind.TNT_CART ? Kind.ARROWS : first);
+		planned = planDispenser(brain, level, dir, first == Kind.TNT_CART ? Kind.ARROWS : first);
+		if (!planned && specialist) {
+			// No room for that one here: try again in a moment rather than giving up for ages.
+			brain.rsCooldown = 40;
+		}
+		return planned;
 	}
 
 	// ------------------------------------------------------------------ planning
