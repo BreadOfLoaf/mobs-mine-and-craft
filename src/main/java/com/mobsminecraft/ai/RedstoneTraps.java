@@ -65,9 +65,15 @@ final class RedstoneTraps {
 		}
 		double dist = mob.distanceTo(target);
 		boolean specialist = brain.personality == Personality.ENGINEER;
-		if (dist < 5.0 || dist > 24.0 || !mob.hasLineOfSight(target) || (!specialist && waveSize(level, mob, target) < 2)) {
+		// An engineer doesn't need to be staring at the player: knowing exactly where they are (just seen or heard) will do.
+		boolean knows = mob.hasLineOfSight(target) || specialist && target instanceof net.minecraft.world.entity.player.Player pl && Awareness.knowsWhere(brain, pl, 60);
+		if (dist < 5.0 || dist > 24.0 || !knows || (!specialist && waveSize(level, mob, target) < 2)) {
+			if (specialist && mob.tickCount % 20 == 0) {
+				com.mobsminecraft.debug.AiStats.add("rs_skip:" + (dist < 5.0 ? "too_close" : dist > 24.0 ? "too_far" : "no_sight"));
+			}
 			return false;
 		}
+		if (specialist) com.mobsminecraft.debug.AiStats.add("rs_attempt");
 		RandomSource r = mob.getRandom();
 		brain.rsCooldown = specialist ? 100 + r.nextInt(100) : 400 + r.nextInt(300);
 		Vec3 d = target.position().subtract(mob.position());
@@ -89,6 +95,7 @@ final class RedstoneTraps {
 		}
 		planned = planDispenser(brain, level, dir, first == Kind.TNT_CART ? Kind.ARROWS : first);
 		if (!planned && specialist) {
+			com.mobsminecraft.debug.AiStats.add("rs_no_room");
 			// No room for that one here: try again in a moment rather than giving up for ages.
 			brain.rsCooldown = 40;
 		}

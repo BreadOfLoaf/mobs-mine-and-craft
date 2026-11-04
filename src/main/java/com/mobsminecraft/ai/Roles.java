@@ -106,6 +106,13 @@ final class Roles {
 				b.engineerAmbush = true;
 				return false;
 			}
+			// ...and bury a mine along its path now and then.
+			if (b.mineCooldown <= 0 && mob.onGround() && level.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.MOB_GRIEFING)) {
+				b.mineCooldown = 600 + mob.getRandom().nextInt(300);
+				if (Personalities.layMine(b, level, null)) {
+					com.mobsminecraft.debug.AiStats.add("engineer_patrol_mine");
+				}
+			}
 			if (b.siteGoal == null || mob.position().distanceToSqr(b.siteGoal) < 4.0 || ++b.siteTicks > 400) {
 				double a = mob.getRandom().nextDouble() * Math.PI * 2;
 				b.siteGoal = mob.position().add(Math.cos(a) * 18, 0.0, Math.sin(a) * 18);
@@ -173,20 +180,29 @@ final class Roles {
 			}
 			b.siteGoal = null;
 		}
-		if (!mob.onGround() || mob.tickCount % 100 != 0) {
+		if (!mob.onGround() || mob.tickCount % 40 != 0) {
 			return false;
 		}
-		b.planHouse(level);
+		// A few tries here (house sizes vary, so a smaller one may fit where a big one didn't).
+		for (int i = 0; i < 3 && b.housePlan == null; i++) {
+			b.planHouse(level);
+		}
 		if (b.housePlan != null) {
 			return true;
 		}
-		// No room here (too close to another build, or rough ground): look elsewhere.
+		// No room here: look around for a good site and go there, rather than wandering about hoping.
+		BlockPos site = Houses.findSite(mob, level);
 		RandomSource r = mob.getRandom();
-		double a = r.nextDouble() * Math.PI * 2;
-		double d = 16 + r.nextInt(10);
-		b.siteGoal = mob.position().add(Math.cos(a) * d, 0.0, Math.sin(a) * d);
+		if (site != null) {
+			b.siteGoal = Vec3.atBottomCenterOf(site);
+			com.mobsminecraft.debug.AiStats.add("builder_found_site");
+		} else {
+			double a = r.nextDouble() * Math.PI * 2;
+			double d = 20 + r.nextInt(12);
+			b.siteGoal = mob.position().add(Math.cos(a) * d, 0.0, Math.sin(a) * d);
+			com.mobsminecraft.debug.AiStats.add("builder_new_site");
+		}
 		b.siteTicks = 0;
-		com.mobsminecraft.debug.AiStats.add("builder_new_site");
 		return true;
 	}
 }

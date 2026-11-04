@@ -439,11 +439,15 @@ final class Personalities {
 	}
 
 	/** A pressure-plate mine one block behind the engineer (on the side away from where it's heading). */
-	private static boolean layMine(SmartBrain b, ServerLevel level, LivingEntity target) {
+	static boolean layMine(SmartBrain b, ServerLevel level, LivingEntity target) {
 		Mob mob = b.mob;
 		Vec3 heading = mob.getDeltaMovement().multiply(1.0, 0.0, 1.0);
-		if (heading.lengthSqr() < 1.0E-4) {
+		if (heading.lengthSqr() < 1.0E-4 && target != null) {
 			heading = mob.position().subtract(target.position()).multiply(1.0, 0.0, 1.0);
+		}
+		// Not a minefield: a few mines in any one area is plenty.
+		if (com.mobsminecraft.world.MobMines.countNear(level, mob.blockPosition(), 12) >= 4) {
+			return false;
 		}
 		if (heading.lengthSqr() < 1.0E-4) {
 			return false;
@@ -453,7 +457,7 @@ final class Personalities {
 		BlockPos ground = plate.below();
 		var gs = level.getBlockState(ground);
 		if (!level.getBlockState(plate).canBeReplaced() || !level.getFluidState(plate).isEmpty() || !BlockWork.isNatural(level, ground, gs)
-			|| !BlockWork.blocksMovement(level, ground) || target.distanceTo(mob) < 3.0F) {
+			|| !BlockWork.blocksMovement(level, ground) || target != null && target.distanceTo(mob) < 3.0F) {
 			return false;
 		}
 		level.setBlock(ground, Blocks.TNT.defaultBlockState(), net.minecraft.world.level.block.Block.UPDATE_ALL);

@@ -65,7 +65,8 @@ public final class Squad {
 		if (!(mob instanceof Enemy) || !mob.isAlive() || mob.isPassenger() || b.knightOf != null) return false;
 		if (!(BlockWork.canBuild(mob) || mob instanceof Creeper || mob instanceof net.minecraft.world.entity.monster.spider.Spider)) return false;
 		Personality p = b.personality;
-		if (p.peaceful() || p == Personality.GRIEFER) return false;
+		// Builders and engineers do their own jobs (houses, traps) rather than squad duty.
+		if (p.peaceful() || p == Personality.GRIEFER || p == Personality.BUILDER || p == Personality.ENGINEER) return false;
 		// Busy builders and crafters finish what they're doing first.
 		return b.housePlan == null && b.helpingWith == null && b.crafterItem == null;
 	}

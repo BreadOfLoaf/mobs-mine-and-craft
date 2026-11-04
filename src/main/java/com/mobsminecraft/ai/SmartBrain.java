@@ -321,6 +321,7 @@ public final class SmartBrain {
 	private boolean digAny;
 	// Building budget for reaching a dig target, and targets it gave up on (unreachable) for a while
 	private int digBuildBudget;
+	private int digWalkStuck;
 	private boolean lastStepPlaced;
 	private final it.unimi.dsi.fastutil.longs.LongOpenHashSet badDigTargets = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
 
@@ -633,6 +634,10 @@ public final class SmartBrain {
 	}
 
 	/** What the mob is busy with right now, in a word (for playtest reports). */
+	public boolean isInitialized() {
+		return this.initialized;
+	}
+
 	public String activity() {
 		if (this.eating()) return "eating";
 		if (this.squadHold && this.squad != null) return "squad_" + this.squad.phase.name().toLowerCase();
@@ -1686,6 +1691,8 @@ public final class SmartBrain {
 		}
 		// Mobs never run out of building blocks; the stock only decides how many they drop.
 		level.setBlock(pos, Block.updateFromNeighbourShapes(state, level, pos), Block.UPDATE_ALL);
+		com.mobsminecraft.debug.AiStats.add("placed:" + (this.mob instanceof Enemy ? "hostile" : "passive") + "/" + this.personalityName() + "/" + this.activity()
+			+ (useStock ? "/mess" : "/" + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath()));
 		if (!useStock) {
 			// Structures (houses, outposts, traps...) are protected; towers, bridges and walls are not.
 			MobBuilt.mark(level, pos);
@@ -2209,6 +2216,25 @@ public final class SmartBrain {
 				this.giveUpDigTarget();
 				return false;
 			}
+			if (this.personality != Personality.MINEMAN && !this.digAny) {
+				// Only minemen dig and build their way to things. Everyone else walks there or leaves it.
+				if (dy > 2.5 && horiz < 2.0 || this.digWalkStuck > 60) {
+					this.digWalkStuck = 0;
+					this.giveUpDigTarget();
+					return false;
+				}
+				Path path = this.mob.getNavigation().getPath();
+				if (path == null || path.isDone() || path.getTarget().distToCenterSqr(c) > 9.0) {
+					Path p2 = this.mob.getNavigation().createPath(this.digTarget, 2);
+					if (p2 == null || !p2.canReach()) {
+						this.giveUpDigTarget();
+						return false;
+					}
+					this.mob.getNavigation().moveTo(p2, this.walkSpeed());
+				}
+				this.digWalkStuck = this.mob.getDeltaMovement().horizontalDistanceSqr() < 1.0E-4 ? this.digWalkStuck + 1 : 0;
+				return true;
+			}
 			if (dy < -1.5 && horiz < 1.5) {
 				this.digBuildBudget--;
 				this.startDig(1, false);
@@ -2232,9 +2258,13 @@ public final class SmartBrain {
 		}
 		RandomSource r = this.mob.getRandom();
 		BlockPos here = this.mob.blockPosition();
-		if (this.oreCooldown == 0) {
+		// Animals don't go mining; only mobs with a use for ore (crafting gear, minemen) do.
+		boolean wantsOre = this.personality == Personality.MINEMAN || !this.isPassive() && (this.toolCrafter || this.combatCrafter);
+		// Only mobs that build things gather building material.
+		boolean needsMaterials = this.personality == Personality.BUILDER || this.houseBuilder || this.outpostBuilder || this.castleBuilder;
+		if (this.oreCooldown == 0 && wantsOre) {
 			this.oreCooldown = 100 + r.nextInt(150);
-			if (r.nextFloat() < 0.85F) {
+			if (r.nextFloat() < (this.personality == Personality.MINEMAN ? 0.85F : 0.3F)) {
 				BlockPos ore = BlockWork.findNearestAt(level, here, 12, BlockWork::isOre, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s)
 					&& (!this.isPassive() || p.getY() >= here.getY() - 1));
 				if (ore == null && !this.isPassive()) {
@@ -2247,7 +2277,7 @@ public final class SmartBrain {
 			}
 		}
 		boolean passive = this.isPassive();
-		if (this.gatherCooldown == 0 && this.blocks < (passive ? 112 : 64)) {
+		if (this.gatherCooldown == 0 && needsMaterials && this.blocks < (passive ? 112 : 64)) {
 			this.gatherCooldown = passive ? 80 + r.nextInt(160) : 200 + r.nextInt(300);
 			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, st -> st.is(BlockTags.LOGS), (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
 			if (log == null && passive) {

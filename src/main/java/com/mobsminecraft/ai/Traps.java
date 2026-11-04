@@ -78,7 +78,7 @@ final class Traps {
 			brain.trapPlan = null;
 			com.mobsminecraft.debug.AiStats.add("tripwire_trap");
 			// Rest a minute or two, then build another one.
-			brain.trapCooldown = brain.personality == Personality.ENGINEER ? 400 + mob.getRandom().nextInt(400) : 1200 + mob.getRandom().nextInt(1200);
+			brain.trapCooldown = brain.personality == Personality.ENGINEER ? 200 + mob.getRandom().nextInt(300) : 1200 + mob.getRandom().nextInt(1200);
 		}
 		return true;
 	}
@@ -90,14 +90,29 @@ final class Traps {
 		Direction dir = null;
 		List<BlockPos> positions = null;
 		int wires = 2 + mob.getRandom().nextInt(4);
-		int length = wires + 4;
-		for (int turn = 0; turn < 4 && positions == null; turn++) {
-			Direction d = turn == 0 ? first : first.getClockWise();
-			first = d;
-			positions = line(level, mob.blockPosition().relative(d, 2), d, length);
-			dir = d;
+		int length = 0;
+		// Real ground is rarely flat for long: try every direction, a step up or down, a few spots along, and
+		// shorter wires, before giving up.
+		search:
+		for (int w = wires; w >= 1; w--) {
+			for (int turn = 0; turn < 4; turn++) {
+				Direction d = turn == 0 ? first : first.getClockWise();
+				first = d;
+				for (int along = 1; along <= 3; along++) {
+					for (int dy : new int[] {0, -1, 1}) {
+						positions = line(level, mob.blockPosition().relative(d, along).above(dy), d, w + 4);
+						if (positions != null) {
+							dir = d;
+							length = w + 4;
+							break search;
+						}
+					}
+				}
+			}
 		}
 		if (positions == null) {
+			com.mobsminecraft.debug.AiStats.add("tripwire_no_room");
+			brain.trapCooldown = 60;
 			return;
 		}
 

@@ -115,6 +115,55 @@ final class Houses {
 	}
 
 	/** True if another mob build (a door, bed, rail, lantern or campfire) is within 14 blocks. */
+	/**
+	 * Looks around for somewhere a house would actually fit: flat, open, dry ground, clear of other builds.
+	 * Returns the spot to stand on (the house's centre), or null if there's nowhere suitable nearby.
+	 */
+	static BlockPos findSite(Mob mob, ServerLevel level) {
+		BlockPos here = mob.blockPosition();
+		BlockPos best = null;
+		int bestScore = Integer.MAX_VALUE;
+		for (int ring = 6; ring <= 22; ring += 4) {
+			for (int k = 0; k < 8; k++) {
+				double a = k * Math.PI / 4 + ring * 0.37;
+				int x = here.getX() + (int) Math.round(Math.cos(a) * ring);
+				int z = here.getZ() + (int) Math.round(Math.sin(a) * ring);
+				if (!level.isLoaded(new BlockPos(x, here.getY(), z))) continue;
+				int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+				BlockPos c = new BlockPos(x, y, z);
+				if (Math.abs(y - here.getY()) > 8 || !level.getFluidState(c.below()).isEmpty() || !level.canSeeSky(c)) continue;
+				int score = siteScore(level, c);
+				// Prefer good ground, then nearer.
+				score = score * 10 + ring;
+				if (score < bestScore && score / 10 <= 4) {
+					bestScore = score;
+					best = c;
+				}
+			}
+		}
+		if (best != null && tooCrowded(level, best)) {
+			return null;
+		}
+		return best;
+	}
+
+	/** How much is wrong with a 5x5 site (missing floor, things in the way): 0 is perfect. */
+	private static int siteScore(ServerLevel level, BlockPos c) {
+		int bad = 0;
+		for (int x = -2; x <= 2; x++) {
+			for (int z = -2; z <= 2; z++) {
+				BlockPos f = c.offset(x, -1, z);
+				if (!BlockWork.isFloor(level, f) || !level.getFluidState(f.above()).isEmpty()) bad++;
+				for (int y = 0; y < 4; y++) {
+					BlockPos q = c.offset(x, y, z);
+					if (MobBuilt.contains(level, q)) return 1000;
+					if (!level.getBlockState(q).canBeReplaced()) bad++;
+				}
+			}
+		}
+		return bad;
+	}
+
 	static boolean tooCrowded(ServerLevel level, BlockPos pos) {
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
 		for (int x = -14; x <= 14; x++) {

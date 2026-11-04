@@ -226,6 +226,8 @@ public class Playtest implements ModInitializer {
 			add(new Scenario("squad_" + mode, 2400, "A mixed band (tacticians, fighters, a hero, a crafter, a builder, an engineer, skeletons, a creeper) vs the player bot; teamwork "
 				+ mode + ".", (run, o) -> {}, mobs("zombie", 8, "skeleton", 3, "creeper", 1), 24, Behaviour.FIGHT));
 		}
+		add(new Scenario("real_day", 12000, "An ordinary world from mid-morning into the night, natural spawns only, the player bot playing survival.",
+			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
 		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
 			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
@@ -498,12 +500,13 @@ public class Playtest implements ModInitializer {
 		private int buildersBusyMax;
 
 		private void startSurvival() {
+			com.mobsminecraft.ai.Squad.enabled = true;
 			cmd("gamerule max_block_modifications 5000000");
 			cmd("gamerule spawn_mobs true");
 			cmd("gamerule advance_time true");
 			cmd("gamerule advance_weather false");
 			cmd("gamerule mob_griefing true");
-			cmd("time set 12500");
+			cmd("time set %d", this.scenario.name().equals("real_day") ? 2000 : 12500);
 			cmd("weather clear");
 			cmd("difficulty normal");
 			cmd("modsmac nametags true");
@@ -552,6 +555,8 @@ public class Playtest implements ModInitializer {
 				this.census.putIfAbsent(m.getUUID(), BuiltInRegistries.ENTITY_TYPE.getKey(m.getType()).getPath() + "/" + brain.personalityName());
 				if (m instanceof net.minecraft.world.entity.monster.Enemy || m instanceof net.minecraft.world.entity.npc.villager.Villager || m instanceof net.minecraft.world.entity.animal.wolf.Wolf) {
 					this.activityByPersona.computeIfAbsent(brain.personalityName(), k -> new java.util.TreeMap<>()).merge(brain.activity(), 1, Integer::sum);
+				} else if (brain.isInitialized()) {
+					this.activityByPersona.computeIfAbsent("passive_" + brain.personalityName(), k -> new java.util.TreeMap<>()).merge(brain.activity(), 1, Integer::sum);
 				}
 				if (brain.buildProgress() >= 0) busy++;
 			}
