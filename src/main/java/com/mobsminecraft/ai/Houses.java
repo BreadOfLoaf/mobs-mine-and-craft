@@ -238,7 +238,7 @@ final class Houses {
 		plan.addAll(roofPlan);
 		states.addAll(roofStates);
 
-		furnish(c, hx, hz, doorX, doorZ, doorSide, r, plan, states);
+		furnish(c, hx, hz, doorX, doorZ, doorSide, r, plan, states, p, wallH);
 
 		// Outside: a dirt path from the door and some flowers.
 		BlockPos doorPos = c.offset(doorX, 0, doorZ);
@@ -262,7 +262,7 @@ final class Houses {
 		brain.houseStates = states;
 		brain.houseIndex = 0;
 		brain.houseCenter = c;
-		brain.buildInterval = 3;
+		brain.buildInterval = 2;
 		return true;
 	}
 
@@ -357,44 +357,161 @@ final class Houses {
 		return top;
 	}
 
-	/** A few random pieces of furniture along the inside walls, never blocking the door. */
+	/** Room themes: each one is a set of furniture that belongs together. */
+	enum Theme { BEDROOM, KITCHEN, LIBRARY, WORKSHOP, STORAGE, FARMHOUSE, BREWERY }
+
+	private static List<BlockState> themePieces(Theme theme, Direction face, RandomSource r) {
+		List<BlockState> p = new ArrayList<>();
+		switch (theme) {
+			case BEDROOM -> {
+				p.add(Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, face));
+				p.add(Blocks.FLOWER_POT.defaultBlockState());
+				if (r.nextBoolean()) p.add(Blocks.BOOKSHELF.defaultBlockState());
+			}
+			case KITCHEN -> {
+				p.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, face));
+				p.add(Blocks.SMOKER.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, face));
+				p.add(Blocks.BARREL.defaultBlockState());
+				p.add(Blocks.CRAFTING_TABLE.defaultBlockState());
+				if (r.nextBoolean()) p.add(Blocks.CAULDRON.defaultBlockState());
+			}
+			case LIBRARY -> {
+				int shelves = 2 + r.nextInt(3);
+				for (int i = 0; i < shelves; i++) p.add(Blocks.BOOKSHELF.defaultBlockState());
+				p.add(Blocks.LECTERN.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, face));
+				if (r.nextFloat() < 0.25F) p.add(Blocks.ENCHANTING_TABLE.defaultBlockState());
+			}
+			case WORKSHOP -> {
+				p.add(Blocks.CRAFTING_TABLE.defaultBlockState());
+				Block[] tools = {Blocks.SMITHING_TABLE, Blocks.FLETCHING_TABLE, Blocks.STONECUTTER, Blocks.LOOM, Blocks.ANVIL, Blocks.GRINDSTONE};
+				int n = 2 + r.nextInt(2);
+				for (int i = 0; i < n; i++) {
+					Block b = tools[r.nextInt(tools.length)];
+					BlockState st = b.defaultBlockState();
+					if (b == Blocks.GRINDSTONE) {
+						st = st.setValue(net.minecraft.world.level.block.FaceAttachedHorizontalDirectionalBlock.FACE,
+							net.minecraft.world.level.block.state.properties.AttachFace.FLOOR);
+					}
+					p.add(st);
+				}
+			}
+			case STORAGE -> {
+				p.add(Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, face));
+				p.add(Blocks.BARREL.defaultBlockState());
+				p.add(Blocks.BARREL.defaultBlockState());
+				if (r.nextBoolean()) p.add(Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, face));
+			}
+			case FARMHOUSE -> {
+				p.add(Blocks.COMPOSTER.defaultBlockState());
+				p.add(Blocks.HAY_BLOCK.defaultBlockState());
+				if (r.nextBoolean()) p.add(Blocks.HAY_BLOCK.defaultBlockState());
+				p.add(Blocks.BARREL.defaultBlockState());
+				p.add(Blocks.FLOWER_POT.defaultBlockState());
+			}
+			case BREWERY -> {
+				p.add(Blocks.BREWING_STAND.defaultBlockState());
+				p.add(Blocks.CAULDRON.defaultBlockState());
+				p.add(Blocks.BARREL.defaultBlockState());
+				if (r.nextBoolean()) p.add(Blocks.BOOKSHELF.defaultBlockState());
+			}
+		}
+		return p;
+	}
+
+	/**
+	 * Fills the house: a main room theme (sometimes a second one), a light source of the house's own style,
+	 * a bed, and sometimes a rug. Bigger houses may get a dividing wall with a door. Nothing blocks the door.
+	 */
 	private static void furnish(BlockPos c, int hx, int hz, int doorX, int doorZ, Direction doorSide, RandomSource r,
-		List<BlockPos> plan, List<BlockState> states) {
+		List<BlockPos> plan, List<BlockState> states, Palette p, int wallH) {
 		BlockPos inside = c.offset(doorX, 0, doorZ).relative(doorSide.getOpposite());
+
+		// A dividing wall across the long side of big houses, with a doorway in the middle.
+		boolean alongX = hx >= hz;
+		int longHalf = alongX ? hx : hz;
+		boolean divider = longHalf >= 4 && r.nextFloat() < 0.5F && (alongX ? doorX != 0 : doorZ != 0);
+		if (divider) {
+			int shortHalf = alongX ? hz : hx;
+			for (int y = 0; y < wallH; y++) {
+				for (int b = -shortHalf + 1; b < shortHalf; b++) {
+					if (b == 0 && y <= 1) {
+						if (y == 0 && p.door() != null) {
+							plan.add(alongX ? c.offset(0, 0, b) : c.offset(b, 0, 0));
+							Direction facing = alongX ? Direction.EAST : Direction.SOUTH;
+							states.add(p.door().defaultBlockState().setValue(DoorBlock.FACING, facing).setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER));
+						}
+						continue;
+					}
+					plan.add(alongX ? c.offset(0, y, b) : c.offset(b, y, 0));
+					states.add(p.wall().defaultBlockState());
+				}
+			}
+		}
+
 		List<BlockPos> spots = new ArrayList<>();
 		for (int x = -hx + 1; x < hx; x++) {
 			for (int z = -hz + 1; z < hz; z++) {
 				boolean byWall = Math.abs(x) == hx - 1 || Math.abs(z) == hz - 1;
-				BlockPos p = c.offset(x, 0, z);
-				if (byWall && p.distManhattan(inside) > 1 && !p.equals(c)) {
-					spots.add(p);
+				boolean onDivider = divider && (alongX ? x == 0 || (x == 1 || x == -1) && z == 0 : z == 0 || (z == 1 || z == -1) && x == 0);
+				BlockPos q = c.offset(x, 0, z);
+				if (byWall && !onDivider && q.distManhattan(inside) > 1 && !q.equals(c)) {
+					spots.add(q);
 				}
 			}
 		}
 		Collections.shuffle(spots, new java.util.Random(r.nextLong()));
-		List<BlockState> pieces = new ArrayList<>();
-		Direction face = doorSide;
-		if (r.nextFloat() < 0.7F) pieces.add(Blocks.CRAFTING_TABLE.defaultBlockState());
-		if (r.nextFloat() < 0.5F) pieces.add(Blocks.FURNACE.defaultBlockState().setValue(AbstractFurnaceBlock.FACING, face));
-		if (r.nextFloat() < 0.5F) pieces.add(Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, face));
-		if (r.nextFloat() < 0.3F) pieces.add(Blocks.BARREL.defaultBlockState());
-		if (r.nextFloat() < 0.3F) pieces.add(Blocks.BOOKSHELF.defaultBlockState());
-		if (r.nextFloat() < 0.2F) pieces.add(Blocks.CAULDRON.defaultBlockState());
-		if (r.nextFloat() < 0.3F) pieces.add(Blocks.FLOWER_POT.defaultBlockState());
-		pieces.add(r.nextBoolean() ? Blocks.LANTERN.defaultBlockState() : Blocks.TORCH.defaultBlockState());
+
+		Theme[] themes = Theme.values();
+		Theme main = themes[r.nextInt(themes.length)];
+		List<BlockState> pieces = new ArrayList<>(themePieces(main, doorSide, r));
+		if (r.nextFloat() < 0.5F || divider) {
+			Theme second = themes[r.nextInt(themes.length)];
+			if (second != main) {
+				pieces.addAll(themePieces(second, doorSide, r));
+			}
+		}
+		// Lighting in the house's own style.
+		int lightStyle = r.nextInt(4);
+		int lights = 1 + r.nextInt(2) + (divider ? 1 : 0);
+		for (int i = 0; i < lights; i++) {
+			pieces.add(switch (lightStyle) {
+				case 0 -> Blocks.LANTERN.defaultBlockState();
+				case 1 -> Blocks.TORCH.defaultBlockState();
+				case 2 -> Blocks.CANDLE.defaultBlockState().setValue(net.minecraft.world.level.block.CandleBlock.LIT, true)
+					.setValue(net.minecraft.world.level.block.CandleBlock.CANDLES, 1 + r.nextInt(4));
+				default -> Blocks.SOUL_LANTERN.defaultBlockState();
+			});
+		}
 		int n = Math.min(pieces.size(), spots.size());
 		for (int i = 0; i < n; i++) {
 			plan.add(spots.get(i));
 			states.add(pieces.get(i));
 		}
+
+		// A rug in the middle of the room.
+		if (r.nextFloat() < 0.5F && hx >= 3 && hz >= 3) {
+			Block carpet = Blocks.CARPET.pick(DyeColor.values()[r.nextInt(DyeColor.values().length)]);
+			for (int x = -1; x <= 1; x++) {
+				for (int z = -1; z <= 1; z++) {
+					BlockPos q = c.offset(x, 0, z);
+					if (!spots.subList(0, n).contains(q) && !(divider && (alongX ? x == 0 : z == 0))) {
+						plan.add(q);
+						states.add(carpet.defaultBlockState());
+					}
+				}
+			}
+		}
+
 		// A bed in a free spot whose neighbour (for the head) is also inside.
-		if (r.nextFloat() < 0.6F) {
+		if (main == Theme.BEDROOM || r.nextFloat() < 0.6F) {
 			for (int i = n; i < spots.size(); i++) {
 				BlockPos foot = spots.get(i);
 				for (Direction d : Direction.Plane.HORIZONTAL) {
 					BlockPos head = foot.relative(d);
 					boolean inside2 = Math.abs(head.getX() - c.getX()) < hx && Math.abs(head.getZ() - c.getZ()) < hz;
-					if (inside2 && !spots.subList(0, n).contains(head) && head.distManhattan(inside) > 1 && !head.equals(c)) {
+					boolean blocked = spots.subList(0, n).contains(head) || head.distManhattan(inside) <= 1 || head.equals(c)
+						|| (divider && (alongX ? head.getX() == c.getX() : head.getZ() == c.getZ()));
+					if (inside2 && !blocked) {
 						Block bed = Blocks.BED.pick(DyeColor.values()[r.nextInt(DyeColor.values().length)]);
 						plan.add(foot);
 						states.add(bed.defaultBlockState().setValue(HorizontalDirectionalBlock.FACING, d).setValue(AbstractBedBlock.PART, BedPart.FOOT));

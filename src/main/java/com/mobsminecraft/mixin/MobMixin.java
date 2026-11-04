@@ -22,6 +22,14 @@ public abstract class MobMixin implements SmartMobHolder {
 		return this.mmc$brain;
 	}
 
+	/** Mobs in the middle of building something don't despawn, so houses get finished. */
+	@Inject(method = "checkDespawn", at = @At("HEAD"), cancellable = true)
+	private void mmc$noDespawnWhileBuilding(CallbackInfo ci) {
+		if (this.mmc$brain != null && this.mmc$brain.isBuilding()) {
+			ci.cancel();
+		}
+	}
+
 	/**
 	 * Runs after goals and navigation have ticked but before the move/look/jump controls apply,
 	 * so the smart brain can override where the mob walks this tick.

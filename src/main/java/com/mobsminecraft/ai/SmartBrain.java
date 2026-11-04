@@ -239,6 +239,23 @@ public final class SmartBrain {
 			this.digTarget, this.assistTicks, this.targetReachable, this.mob.getMainHandItem().getItem());
 	}
 
+	public boolean isBuilding() {
+		return this.housePlan != null || this.rsPlan != null || this.trapPlan != null;
+	}
+
+	/** Fraction of the current build placed, or -1 if not building a house/outpost. */
+	public double buildProgress() {
+		return this.housePlan == null ? -1 : this.houseIndex / (double) this.housePlan.size();
+	}
+
+	/** Test hook: start a build right here (house above ground, underground build below). */
+	public boolean debugStartBuild(ServerLevel level) {
+		if (this.housePlan == null) {
+			this.planHouse(level);
+		}
+		return this.housePlan != null;
+	}
+
 	public boolean isBowEnchanted() {
 		return this.bowEnchanted;
 	}
@@ -320,7 +337,7 @@ public final class SmartBrain {
 		}
 
 		boolean freeTime = target == null || this.mob.distanceTo(target) > 12.0F;
-		if (freeTime && this.miningPos == null && this.towerRemaining == 0 && this.digRemaining == 0) {
+		if (freeTime && this.miningPos == null && this.towerRemaining == 0 && this.digRemaining == 0 && this.housePlan == null) {
 			if (this.tickToolCrafting(level, griefing)) {
 				return;
 			}
@@ -404,6 +421,9 @@ public final class SmartBrain {
 			return;
 		}
 
+		if (this.housePlan != null && this.tickBlueprint(level)) {
+			return;
+		}
 		if (this.tickCastleGuard()) {
 			return;
 		}
@@ -413,11 +433,14 @@ public final class SmartBrain {
 		if (this.housePlan == null && this.outpostBuilder && this.outpostCooldown == 0 && this.mob.onGround()
 			&& Outpost.isUnderground(level, this.mob) && this.mob.getRandom().nextInt(100) == 0) {
 			this.outpostCooldown = 600;
-			Underground.plan(this, level);
+			if (Underground.plan(this, level)) {
+				com.mobsminecraft.debug.AiStats.add("build_started");
+			}
 		}
 		if (this.housePlan == null && this.isPassive() && this.logsChopped >= 10 && this.houseCooldown == 0
 			&& this.mob.onGround() && this.mob.getRandom().nextInt(40) == 0) {
 			if (Houses.plan(this, level, Houses.forLog(this.woodLog), false)) {
+				com.mobsminecraft.debug.AiStats.add("build_started");
 				this.logsChopped = 0;
 			} else {
 				this.houseCooldown = 200;
@@ -525,19 +548,22 @@ public final class SmartBrain {
 			this.targetReachable = path != null && path.canReach();
 		}
 
-		Vec3 pos = this.mob.position();
-		if (pos.distanceToSqr(this.lastPos) < 0.01) {
-			this.stuckTicks++;
-		} else {
-			this.stuckTicks = 0;
+		// Progress check over 1-second windows: jittering back and forth on a dead-end path still counts as stuck.
+		if (this.mob.tickCount % 20 == 0) {
+			Vec3 pos = this.mob.position();
+			if (pos.distanceToSqr(this.lastPos) < 0.25) {
+				this.stuckTicks += 20;
+			} else {
+				this.stuckTicks = 0;
+			}
+			this.lastPos = pos;
 		}
-		this.lastPos = pos;
 
 		// Take over when the path is impossible, or when the mob hasn't moved for 3 seconds even though
 		// vanilla thinks there's a path (e.g. swimming in a moat it can't climb out of).
 		boolean shooting = this.mob instanceof RangedAttackMob && this.mob.distanceTo(target) < 16.0F && this.mob.hasLineOfSight(target);
 		boolean stuckAnyway = this.stuckTicks > 60 && this.mob.distanceTo(target) > 2.5F && !shooting;
-		if ((!this.targetReachable && (this.stuckTicks > 10 || this.mob.getNavigation().isDone())) || stuckAnyway) {
+		if ((!this.targetReachable && (this.stuckTicks >= 20 || this.mob.getNavigation().isDone())) || stuckAnyway) {
 			if (stuckAnyway && this.assistTicks == 0) {
 				com.mobsminecraft.debug.AiStats.add("unstuck_assist");
 			}
@@ -1109,21 +1135,27 @@ public final class SmartBrain {
 		Vec3 c = Vec3.atBottomCenterOf(this.houseCenter);
 		double distSq = this.mob.distanceToSqr(c);
 		if (distSq > 1024.0) {
+			com.mobsminecraft.debug.AiStats.add("build_abandoned:too_far");
 			this.housePlan = null;
 			this.buildingOutpost = false;
 			return false;
 		}
-		// Long builds (mineshafts): walk along to the next block when it's out of reach.
+		// Build from where it stands; only walk when the next block is out of reach (long builds like mineshafts).
+		// Measured horizontally: roofs are high up but still within reach of a builder standing inside.
 		BlockPos nextPos = this.housePlan.get(Math.min(this.houseIndex, this.housePlan.size() - 1));
-		Vec3 goal = this.mob.distanceToSqr(Vec3.atCenterOf(nextPos)) > 36.0 ? Vec3.atBottomCenterOf(nextPos) : c;
-		if (this.mob.distanceToSqr(goal) > (goal == c ? 1.0 : 25.0) && this.buildWalkTicks < 100) {
+		double hx = nextPos.getX() + 0.5 - this.mob.getX();
+		double hz = nextPos.getZ() + 0.5 - this.mob.getZ();
+		boolean outOfReach = hx * hx + hz * hz > 81.0;
+		if (outOfReach && this.buildWalkTicks < 100) {
 			this.buildWalkTicks++;
 			if (this.mob.tickCount % 10 == 0) {
-				this.mob.getNavigation().moveTo(goal.x, goal.y, goal.z, this.walkSpeed());
+				this.mob.getNavigation().moveTo(nextPos.getX() + 0.5, nextPos.getY(), nextPos.getZ() + 0.5, this.walkSpeed());
 			}
 			return true;
 		}
-		this.buildWalkTicks = 0;
+		if (!outOfReach) {
+			this.buildWalkTicks = 0;
+		}
 		this.holdStill();
 		if (++this.buildTick % this.buildInterval != 0) {
 			return true;
@@ -1138,6 +1170,7 @@ public final class SmartBrain {
 			}
 		}
 		if (this.houseIndex >= this.housePlan.size()) {
+			com.mobsminecraft.debug.AiStats.add("build_finished");
 			this.housePlan = null;
 			if (this.buildingOutpost) {
 				this.buildingOutpost = false;
@@ -1185,8 +1218,12 @@ public final class SmartBrain {
 			return true;
 		}
 		boolean placed = this.place(level, pos, state, false);
-		if (placed && this.buildingOutpost && (state.is(Blocks.CHEST) || state.is(Blocks.BARREL))) {
-			Furnaces.fillSupplyChest(level, pos, this.mob.getRandom());
+		if (placed && (state.is(Blocks.CHEST) || state.is(Blocks.BARREL))) {
+			if (this.buildingOutpost) {
+				Furnaces.fillSupplyChest(level, pos, this.mob.getRandom());
+			} else {
+				Furnaces.fillHouseChest(level, pos, this.mob.getRandom());
+			}
 		}
 		return placed;
 	}
@@ -1222,6 +1259,9 @@ public final class SmartBrain {
 			Underground.plan(this, level);
 		} else {
 			Houses.plan(this, level, Houses.random(this.mob.getRandom()), false);
+		}
+		if (this.housePlan != null) {
+			com.mobsminecraft.debug.AiStats.add("build_started");
 		}
 	}
 
@@ -1280,8 +1320,9 @@ public final class SmartBrain {
 		if (this.oreCooldown == 0) {
 			this.oreCooldown = 100 + r.nextInt(150);
 			if (r.nextFloat() < 0.85F) {
-				BlockPos ore = BlockWork.findNearestAt(level, here, 12, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
-				if (ore == null) {
+				BlockPos ore = BlockWork.findNearestAt(level, here, 12, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s)
+					&& (!this.isPassive() || p.getY() >= here.getY() - 1));
+				if (ore == null && !this.isPassive()) {
 					ore = BlockWork.findNearestAt(level, here, 8, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
 				}
 				if (ore != null) {
@@ -1296,11 +1337,12 @@ public final class SmartBrain {
 			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
 			if (log == null && passive) {
 				// Passive mobs quarry stone into cobblestone.
-				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> st.is(BlockTags.BASE_STONE_OVERWORLD) && BlockWork.isNatural(level, p, st)
+				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> st.is(BlockTags.BASE_STONE_OVERWORLD) && BlockWork.isNatural(level, p, st) && p.getY() >= here.getY()
 					&& BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, st));
 			}
 			BlockPos pick = log != null ? log : BlockWork.findNearestAt(level, here, 3,
-				(p, s) -> BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && !p.equals(here.below()) && BlockWork.canMine(this.mob, level, p, s));
+				(p, s) -> BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && !p.equals(here.below())
+				&& (!passive || p.getY() >= here.getY()) && BlockWork.canMine(this.mob, level, p, s));
 			if (pick != null) {
 				this.setDigTarget(pick, false);
 				return true;

@@ -44,7 +44,7 @@ public class Playtest implements ModInitializer {
 	/** One test setup: arena tweaks, mobs to spawn, and how the bot behaves. */
 	record Scenario(String name, int ticks, String description, BiConsumer<Run, BlockPos> setup, Map<String, Integer> mobs, double ring, Behaviour bot) {}
 
-	enum Behaviour { STAND, FIGHT, KITE }
+	enum Behaviour { STAND, FIGHT, KITE, SPECTATE }
 
 	static final Map<String, Scenario> SCENARIOS = new LinkedHashMap<>();
 
@@ -65,6 +65,33 @@ public class Playtest implements ModInitializer {
 		}, mobs("zombie", 6, "skeleton", 2), 18, Behaviour.STAND));
 		add(new Scenario("wave", 1800, "Bot fights back with an iron sword against a big mixed wave.", (run, o) -> {},
 			mobs("zombie", 6, "skeleton", 4, "creeper", 2, "spider", 2, "witch", 1, "husk", 1), 18, Behaviour.FIGHT));
+		add(new Scenario("in_house", 1800, "Bot hides in a 7x7 oak house with a door and glass windows.", (run, o) -> {
+			int x = o.getX();
+			int z = o.getZ();
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:oak_planks hollow", x - 3, z - 3, x + 3, z + 3);
+			run.cmd("fill %d 122 %d %d 122 %d minecraft:glass_pane", x - 1, z - 3, x + 1, z - 3);
+			run.cmd("fill %d 122 %d %d 122 %d minecraft:glass_pane", x - 3, z - 1, x - 3, z + 1);
+			run.cmd("setblock %d 121 %d minecraft:oak_door[facing=south,half=lower]", x, z + 3);
+			run.cmd("setblock %d 122 %d minecraft:oak_door[facing=south,half=upper]", x, z + 3);
+		}, mobs("zombie", 6, "skeleton", 2, "creeper", 2), 16, Behaviour.STAND));
+		add(new Scenario("cave", 1800, "Bot fights in a sealed 21x21 cave room deep underground.", (run, o) -> {
+			int x = o.getX();
+			int z = o.getZ();
+			run.cmd("fill %d 121 %d %d 128 %d minecraft:stone", x - 14, z - 14, x + 14, z + 14);
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:air", x - 10, z - 10, x + 10, z + 10);
+			run.cmd("fill %d 121 %d %d 121 %d minecraft:coal_ore", x - 9, z - 10, x - 7, z - 10);
+			run.cmd("fill %d 121 %d %d 121 %d minecraft:iron_ore", x + 7, z + 10, x + 9, z + 10);
+		}, mobs("zombie", 5, "skeleton", 3, "spider", 2, "creeper", 1), 8, Behaviour.STAND));
+		add(new Scenario("house_build", 3600, "12 builders each start a house (no combat; spectator bot far away). Do they finish?", (run, o) -> {},
+			mobs("zombie", 4, "skeleton", 2, "villager", 4, "cow", 2), -18, Behaviour.SPECTATE));
+		add(new Scenario("passive_life", 3600, "Cows, sheep and villagers in a field with trees; spectator bot. What do they do?", (run, o) -> {
+			for (int i = 0; i < 10; i++) {
+				int tx = o.getX() - 30 + (i % 5) * 15;
+				int tz = o.getZ() + (i < 5 ? -20 : 20);
+				run.cmd("place feature minecraft:%s %d 121 %d", i % 3 == 0 ? "birch" : "oak", tx, tz);
+			}
+			run.cmd("fill %d 121 %d %d 123 %d minecraft:stone", o.getX() + 25, o.getZ() - 5, o.getX() + 28, o.getZ() + 5);
+		}, mobs("cow", 6, "sheep", 4, "villager", 4, "pig", 2), 14, Behaviour.SPECTATE));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -236,7 +263,13 @@ public class Playtest implements ModInitializer {
 			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, east + 40);
 			this.scenario.setup().accept(this, this.origin);
 
+			if (this.scenario.bot() == Behaviour.SPECTATE) {
+				this.botStart = Vec3.atBottomCenterOf(this.origin.offset(0, 1, -38));
+			}
 			this.bot = Bot.spawn(this.server, this.level, "Tester", this.botStart);
+			if (this.scenario.bot() == Behaviour.SPECTATE) {
+				this.bot.player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
+			}
 			if (this.scenario.bot() == Behaviour.FIGHT) {
 				this.bot.hold(new ItemStack(Items.IRON_SWORD));
 			}
@@ -250,6 +283,11 @@ public class Playtest implements ModInitializer {
 						: n * (Math.PI * 2 / total);
 					double mx = x + 0.5 + Math.cos(angle) * this.scenario.ring();
 					double mz = z + 0.5 + Math.sin(angle) * this.scenario.ring();
+					if (this.scenario.ring() < 0) {
+						double spacing = -this.scenario.ring();
+						mx = x + 0.5 + (n % 4 - 1.5) * spacing;
+						mz = z + 0.5 + (n / 4 - 1) * spacing;
+					}
 					spawn(e.getKey(), mx, mz);
 					n++;
 				}
@@ -305,6 +343,11 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			this.bot.tick();
+			if (this.ticks == 20 && this.scenario.name().equals("house_build")) {
+				for (Tracked t : this.tracked) {
+					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugStartBuild(this.level);
+				}
+			}
 			if (this.ticks % 10 == 0) {
 				for (Tracked t : this.tracked) {
 					if (t.mob.isAlive()) {
@@ -394,6 +437,14 @@ public class Playtest implements ModInitializer {
 			}
 			this.tracked.stream().filter(t -> t.lastStuckState != null).limit(6)
 				.forEach(t -> sb.append("  stuck ").append(t.type).append(": ").append(t.lastStuckState).append('\n'));
+			if (this.scenario.bot() == Behaviour.SPECTATE) {
+				for (Tracked t : this.tracked) {
+					double prog = ((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().buildProgress();
+					sb.append(String.format(Locale.ROOT, "  builder %-9s alive=%s building=%s  [%s]%n", t.type, t.mob.isAlive(),
+						prog < 0 ? "no" : String.format(Locale.ROOT, "%.0f%%", prog * 100),
+						((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugState()));
+				}
+			}
 			sb.append("AI actions: ").append(stats.isEmpty() ? "none" : stats.toString()).append('\n');
 			String report = sb.toString();
 			LOG.info("\n{}", report);

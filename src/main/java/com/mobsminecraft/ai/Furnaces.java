@@ -61,6 +61,27 @@ final class Furnaces {
 		}
 	}
 
+	private static final Item[] HOUSEHOLD = {
+		Items.BREAD, Items.WHEAT, Items.CARROT, Items.POTATO, Items.APPLE, Items.WHEAT_SEEDS, Items.COAL, Items.TORCH,
+		Items.STRING, Items.BONE, Items.LEATHER, Items.BOOK, Items.PAPER, Items.STICK, Items.FEATHER, Items.COOKED_BEEF,
+		Items.IRON_INGOT, Items.FLINT, Items.SUGAR_CANE, Items.EGG,
+	};
+
+	/** Fills a house chest or barrel with a few random household items. */
+	static void fillHouseChest(ServerLevel level, BlockPos pos, RandomSource r) {
+		if (!(level.getBlockEntity(pos) instanceof Container chest)) {
+			return;
+		}
+		int stacks = 2 + r.nextInt(4);
+		for (int i = 0; i < stacks; i++) {
+			Item item = HOUSEHOLD[r.nextInt(HOUSEHOLD.length)];
+			HopperBlockEntity.addItem(null, chest, new ItemStack(item, 1 + r.nextInt(Math.min(8, item.getDefaultMaxStackSize()))), null);
+		}
+		if (r.nextFloat() < 0.08F) {
+			HopperBlockEntity.addItem(null, chest, new ItemStack(Items.EMERALD, 1 + r.nextInt(3)), null);
+		}
+	}
+
 	/**
 	 * Passive mobs (and villagers) now and then place or find a furnace, put raw meat in it,
 	 * wait for it to cook, then take the cooked food (healing a little if hurt). Returns true while busy.
@@ -116,6 +137,7 @@ final class Furnaces {
 			if (!result.isEmpty()) {
 				Inventory.store(brain, result);
 			}
+			com.mobsminecraft.debug.AiStats.add("cooked_food");
 			brain.cookPos = null;
 			return false;
 		}
