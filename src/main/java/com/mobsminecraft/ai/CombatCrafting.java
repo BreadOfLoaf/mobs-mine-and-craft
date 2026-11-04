@@ -47,7 +47,7 @@ final class CombatCrafting {
 				brain.crafting = Craft.LADDERS;
 			} else {
 				int roll = r.nextInt(100);
-				brain.crafting = roll < 30 ? Craft.ANVILS : roll < 60 ? Craft.LAVA_BUCKET : roll < 80 ? Craft.WATER_BUCKET : Craft.LADDERS;
+				brain.crafting = roll < 35 ? Craft.ANVILS : roll < 43 ? Craft.LAVA_BUCKET : roll < 70 ? Craft.WATER_BUCKET : Craft.LADDERS;
 			}
 			brain.craftTicks = 0;
 			brain.craftTable = BlockWork.findNearest(level, mob.blockPosition(), 8, s -> s.is(Blocks.CRAFTING_TABLE));
@@ -77,7 +77,7 @@ final class CombatCrafting {
 		if (brain.craftTicks >= CRAFT_TICKS) {
 			switch (brain.crafting) {
 				case LADDERS -> brain.ladders += 16;
-				case LAVA_BUCKET -> Consumable.addCarried(brain, Consumable.LAVA_BUCKET, 2, null);
+				case LAVA_BUCKET -> Consumable.addCarried(brain, Consumable.LAVA_BUCKET, 1, null);
 				case WATER_BUCKET -> Consumable.addCarried(brain, Consumable.WATER_BUCKET, 2, null);
 				case ANVILS -> brain.anvils += 2;
 			}

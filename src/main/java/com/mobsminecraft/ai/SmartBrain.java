@@ -184,6 +184,23 @@ public final class SmartBrain {
 	BlockPos climbToward;
 	private int buildWalkTicks;
 
+	// Big-fight roles: potion support and redstone engineers (see Support, RedstoneTraps)
+	boolean supporter;
+	int supportCooldown;
+	boolean engineer;
+	int rsCooldown;
+	RedstoneTraps.Kind rsKind;
+	List<BlockPos> rsPlan;
+	List<BlockState> rsStates;
+	int rsIndex;
+	BlockPos rsButtonSpot;
+	BlockPos rsButton;
+	BlockPos rsCartPos;
+	Direction rsDir;
+	int rsPresses;
+	int rsPressCooldown;
+	int rsOperateTicks;
+
 	// Creeper TNT waiting to be lit (see MobSpecials)
 	final List<BlockPos> unlitTnt = new ArrayList<>();
 	int tntLightTicks;
@@ -235,6 +252,9 @@ public final class SmartBrain {
 		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
 		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.4F;
 		this.combatCraftCooldown = 200 + r.nextInt(400);
+		this.supporter = this.mob instanceof Enemy && r.nextFloat() < 0.2F;
+		this.engineer = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
+		this.rsCooldown = 100 + r.nextInt(300);
 		this.outpostCooldown = 200 + r.nextInt(600);
 		this.cookCooldown = 400 + r.nextInt(1200);
 		if (this.isPassive()) {
@@ -282,6 +302,7 @@ public final class SmartBrain {
 		boolean canBuild = griefing && BlockWork.canBuild(this.mob) && !this.mob.isPassenger();
 
 		if (target != null) {
+			Support.tick(this, level, target);
 			Consumable.tryUse(this, level, target, griefing);
 			MobSpecials.combat(this, level, target, griefing);
 		}
@@ -351,6 +372,9 @@ public final class SmartBrain {
 			if (MobSpecials.trySniper(this, level, target)) {
 				return;
 			}
+			if (RedstoneTraps.tick(this, level, target, griefing)) {
+				return;
+			}
 			if (CombatCrafting.tick(this, level, target, griefing)) {
 				return;
 			}
@@ -417,6 +441,8 @@ public final class SmartBrain {
 		if (this.houseCooldown > 0) this.houseCooldown--;
 		if (this.combatCraftCooldown > 0) this.combatCraftCooldown--;
 		if (this.anvilCooldown > 0) this.anvilCooldown--;
+		if (this.supportCooldown > 0) this.supportCooldown--;
+		if (this.rsCooldown > 0) this.rsCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
 		if (this.gatherCooldown > 0) this.gatherCooldown--;
