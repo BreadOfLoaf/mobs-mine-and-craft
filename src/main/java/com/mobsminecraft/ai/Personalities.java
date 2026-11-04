@@ -247,7 +247,8 @@ final class Personalities {
 		if (victim != null && !victim.isAlive() && victim.getLastHurtByMob() == mob) {
 			slain(b, level, victim);
 		}
-		if (victim != null && (!victim.isAlive() || victim.distanceTo(mob) > 24.0F)) {
+		boolean grudge = victim != null && victim == b.provokedBy && mob.tickCount < b.provokedUntil;
+		if (victim != null && (!victim.isAlive() || victim.distanceTo(mob) > (grudge ? 48.0F : 24.0F))) {
 			b.imposterVictim = null;
 			victim = null;
 		}
@@ -366,7 +367,7 @@ final class Personalities {
 				net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE));
 		}
 		mob.heal(4.0F);
-		for (EquipmentSlot slot : EquipmentSlot.values()) {
+		for (EquipmentSlot slot : victim instanceof Player ? new EquipmentSlot[0] : EquipmentSlot.values()) {
 			ItemStack st = victim.getItemBySlot(slot);
 			if (!st.isEmpty() && st.isDamageableItem() && b.stolen.size() < 6) {
 				b.stolen.add(st.copy());

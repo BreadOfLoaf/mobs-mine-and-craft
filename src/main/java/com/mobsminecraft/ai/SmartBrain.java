@@ -337,6 +337,16 @@ public final class SmartBrain {
 	int flankSlot = Integer.MIN_VALUE;
 	Vec3 flankBase;
 	int sidestepTicks;
+	// Under fire (see UnderFire): who's shooting, until when we remember it, where we're hiding.
+	net.minecraft.world.entity.player.Player fireFrom;
+	int underFireUntil;
+	BlockPos coverSpot;
+	int coverSearchTick;
+	int zigTicks;
+	int zigSide = 1;
+	/** A player who attacked a mob that normally leaves players alone (imposters), and until when it holds a grudge. */
+	net.minecraft.world.entity.player.Player provokedBy;
+	int provokedUntil;
 	final List<long[]> pendingAnvils = new ArrayList<>();
 
 	// Going after items on the ground (see Looting)
@@ -559,6 +569,9 @@ public final class SmartBrain {
 			return false;
 		}
 		Personality p = this.personality;
+		if (target == this.provokedBy && this.mob.tickCount < this.provokedUntil) {
+			return false;
+		}
 		if (p.peaceful() || p == Personality.ENGINEER || p == Personality.GRIEFER) {
 			return true;
 		}
@@ -792,6 +805,9 @@ public final class SmartBrain {
 		// Nobody (but a creeper) wants to be next to lit TNT.
 		if (!(this.mob instanceof net.minecraft.world.entity.monster.Creeper) && BlockWork.canBuild(this.mob) && Griefer.dodgeTnt(this, level)) {
 			this.cancelMining(level);
+			return;
+		}
+		if (UnderFire.tick(this, level, target)) {
 			return;
 		}
 		if (this.sidestepTicks > 0 && target != null) {
@@ -1555,7 +1571,7 @@ public final class SmartBrain {
 		this.takeOutPickaxeFor(this.mob.level().getBlockState(pos));
 	}
 
-	private void cancelMining(ServerLevel level) {
+	void cancelMining(ServerLevel level) {
 		if (this.miningPos != null) {
 			level.destroyBlockProgress(this.mob.getId(), this.miningPos, -1);
 			this.miningPos = null;

@@ -210,6 +210,18 @@ public class Playtest implements ModInitializer {
 			mobs("zombie", 20), 12, Behaviour.FIGHT));
 		add(new Scenario("role_world", 9600, "Survival world: plus 2 zombies of every personality spawned near the bot. What does each one spend its time doing?",
 			(run, o) -> {}, mobs(), 0, Behaviour.PLAYER));
+		// One arena per personality against the player bot: ore underground and two player huts, so workers have work.
+		for (String persona : new String[] {"fighter", "tactician", "builder", "engineer", "crafter", "mineman", "imposter", "hero", "gifter", "griefer"}) {
+			add(new Scenario("vs_" + persona, 2400, "Four zombies and two skeletons, all " + persona + "s, around the player bot (ore underground, two player huts).",
+				(run, o) -> {
+					java.util.Random rnd = new java.util.Random(o.getX());
+					for (int i = 0; i < 160; i++) {
+						run.cmd("setblock %d %d %d minecraft:%s", o.getX() - 25 + rnd.nextInt(51), 113 + rnd.nextInt(6), o.getZ() - 25 + rnd.nextInt(51), rnd.nextBoolean() ? "iron_ore" : "coal_ore");
+					}
+					run.cmd("fill %d 121 %d %d 123 %d minecraft:oak_planks hollow", o.getX() + 8, o.getZ() + 8, o.getX() + 11, o.getZ() + 11);
+					run.cmd("fill %d 121 %d %d 123 %d minecraft:cobblestone hollow", o.getX() - 11, o.getZ() + 8, o.getX() - 8, o.getZ() + 11);
+				}, mobs("zombie", 4, "skeleton", 2), 14, Behaviour.FIGHT));
+		}
 		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
 			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
@@ -628,7 +640,12 @@ public class Playtest implements ModInitializer {
 						this.takeCensus();
 					}
 				}
-				case FIGHT -> this.brain.tick();
+				case FIGHT -> {
+					this.brain.tick();
+					if (this.ticks % 100 == 0) {
+						this.takeCensus();
+					}
+				}
 				default -> {
 				}
 			}
@@ -695,6 +712,7 @@ public class Playtest implements ModInitializer {
 						case "house_build", "house_build_hostile", "house_build_villagers" -> brain.debugPersonality("builder");
 						case "craft_fight", "craft_idle" -> { if (pi++ < 2) brain.debugPersonality("crafter"); }
 						case "role_check" -> brain.debugPersonality(personas[pi++ / 2 % personas.length]);
+						case String n when n.startsWith("vs_") -> brain.debugPersonality(n.substring(3));
 						case "roles_near" -> brain.debugPersonality(t.type.equals("skeleton") ? "tactician"
 							: new String[] {"engineer", "engineer", "mineman", "mineman", "builder", "builder", "crafter", "crafter", "griefer", "griefer", "tactician", "tactician"}[pi++]);
 						case "anvil_warn" -> { brain.debugPersonality("tactician"); brain.debugForce("anvils"); }
@@ -917,7 +935,7 @@ public class Playtest implements ModInitializer {
 					sb.append(String.format(Locale.ROOT, "  gear %-9s alive=%s %s%n", t.type, t.mob.isAlive(), eq));
 				}
 			}
-			if (this.scenario.bot() == Behaviour.CIRCLE) {
+			if (this.scenario.bot() == Behaviour.CIRCLE || this.scenario.bot() == Behaviour.FIGHT) {
 				sb.append("What each personality was doing (samples every 5 s):\n");
 				for (Map.Entry<String, Map<String, Integer>> e : this.activityByPersona.entrySet()) {
 					int total = e.getValue().values().stream().mapToInt(Integer::intValue).sum();
