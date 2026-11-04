@@ -140,25 +140,60 @@ public final class BlockWork {
 
 	/** Nearest block within a cube of the given radius that matches, or null. */
 	public static BlockPos findNearest(ServerLevel level, BlockPos center, int radius, Predicate<BlockState> test) {
-		return findNearestAt(level, center, radius, (pos, state) -> test.test(state));
+		return findNearestAt(level, center, radius, test, (pos, state) -> true);
 	}
 
 	/** Like {@link #findNearest} but the test also sees the position. */
 	public static BlockPos findNearestAt(ServerLevel level, BlockPos center, int radius, BiPredicate<BlockPos, BlockState> test) {
+		return findNearestAt(level, center, radius, null, test);
+	}
+
+	/**
+	 * Nearest matching block in a cube. Works section by section: chunks that aren't loaded are skipped (it never
+	 * loads or generates terrain), empty sections are skipped, and when {@code mayMatch} is given, so is any section
+	 * whose palette has no block it could match (most sections have no ore at all, so ore searches are nearly free).
+	 */
+	public static BlockPos findNearestAt(ServerLevel level, BlockPos center, int radius, Predicate<BlockState> mayMatch, BiPredicate<BlockPos, BlockState> test) {
 		BlockPos best = null;
 		double bestDist = Double.MAX_VALUE;
 		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
-		for (int x = -radius; x <= radius; x++) {
-			for (int y = -radius; y <= radius; y++) {
-				for (int z = -radius; z <= radius; z++) {
-					p.set(center.getX() + x, center.getY() + y, center.getZ() + z);
-					if (!test.test(p, level.getBlockState(p))) {
+		int x0 = center.getX() - radius, x1 = center.getX() + radius;
+		int y0 = Math.max(level.getMinY(), center.getY() - radius), y1 = Math.min(level.getMaxY(), center.getY() + radius);
+		int z0 = center.getZ() - radius, z1 = center.getZ() + radius;
+		for (int cx = x0 >> 4; cx <= x1 >> 4; cx++) {
+			for (int cz = z0 >> 4; cz <= z1 >> 4; cz++) {
+				net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+				if (chunk == null) {
+					continue;
+				}
+				for (int sy = y0 >> 4; sy <= y1 >> 4; sy++) {
+					int index = chunk.getSectionIndexFromSectionY(sy);
+					if (index < 0 || index >= chunk.getSectionsCount()) continue;
+					net.minecraft.world.level.chunk.LevelChunkSection section = chunk.getSection(index);
+					if (section.hasOnlyAir() && (mayMatch == null || !mayMatch.test(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()))) {
 						continue;
 					}
-					double d = x * x + y * y + z * z;
-					if (d < bestDist) {
-						bestDist = d;
-						best = p.immutable();
+					if (mayMatch != null && !section.maybeHas(mayMatch)) {
+						continue;
+					}
+					int bx0 = Math.max(x0, cx << 4), bx1 = Math.min(x1, (cx << 4) + 15);
+					int by0 = Math.max(y0, sy << 4), by1 = Math.min(y1, (sy << 4) + 15);
+					int bz0 = Math.max(z0, cz << 4), bz1 = Math.min(z1, (cz << 4) + 15);
+					for (int x = bx0; x <= bx1; x++) {
+						for (int y = by0; y <= by1; y++) {
+							for (int z = bz0; z <= bz1; z++) {
+								BlockState state = section.getBlockState(x & 15, y & 15, z & 15);
+								if (mayMatch != null && !mayMatch.test(state)) continue;
+								p.set(x, y, z);
+								if (!test.test(p, state)) continue;
+								double dx = x - center.getX(), dy = y - center.getY(), dz = z - center.getZ();
+								double d = dx * dx + dy * dy + dz * dz;
+								if (d < bestDist) {
+									bestDist = d;
+									best = p.immutable();
+								}
+							}
+						}
 					}
 				}
 			}

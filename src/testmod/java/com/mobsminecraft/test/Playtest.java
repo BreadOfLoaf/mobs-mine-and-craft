@@ -177,6 +177,27 @@ public class Playtest implements ModInitializer {
 			run.cmd("fill %d 121 %d %d 128 %d minecraft:obsidian", o.getX(), o.getZ(), o.getX(), o.getZ());
 			run.botStart = Vec3.atBottomCenterOf(o.above(9));
 		}, mobs("zombie", 8, "skeleton", 2), 12, Behaviour.STAND));
+		// --- honesty and tactics -------------------------------------------------------------------------
+		add(new Scenario("stealth_silent", 1200, "Bot sits quietly in a sealed stone room the mobs never saw it enter.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:stone hollow", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+		}, mobs("zombie", 6, "skeleton", 2), 14, Behaviour.STAND));
+		add(new Scenario("stealth_noisy", 1200, "Same sealed room, but the bot is mining away inside it (noisy).", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:stone hollow", o.getX() - 2, o.getZ() - 2, o.getX() + 2, o.getZ() + 2);
+		}, mobs("zombie", 6, "skeleton", 2), 14, Behaviour.STAND));
+		add(new Scenario("seen_then_hide", 1200, "Bot stands in the open for 5 seconds, then ducks into a sealed room 3 blocks away.", (run, o) -> {
+			run.cmd("fill %d 121 %d %d 124 %d minecraft:stone hollow", o.getX() + 1, o.getZ() - 2, o.getX() + 5, o.getZ() + 2);
+			run.botStart = Vec3.atBottomCenterOf(o.above().west(2));
+		}, mobs("zombie", 6, "skeleton", 2), 14, Behaviour.STAND));
+		add(new Scenario("wave_classic", 1500, "The big mixed wave with the new tactics switched OFF (no flanking, skeletons fire through allies).", (run, o) -> {},
+			mobs("zombie", 8, "skeleton", 4, "husk", 2), 16, Behaviour.FIGHT));
+		add(new Scenario("wave_smart", 1500, "The same wave with flanking and hold-fire ON.", (run, o) -> {},
+			mobs("zombie", 8, "skeleton", 4, "husk", 2), 16, Behaviour.FIGHT));
+		add(new Scenario("anvil_warn", 900, "Zombies carrying anvils near a standing bot: every drop should be warned first.", (run, o) -> {},
+			mobs("zombie", 3), 6, Behaviour.STAND));
+		add(new Scenario("crowd", 1200, "Limit test: 120 mobs of all kinds around a fighting bot. How much does the AI cost per tick?", (run, o) -> {},
+			mobs("zombie", 40, "skeleton", 20, "creeper", 10, "spider", 10, "villager", 15, "cow", 15, "pig", 10), 20, Behaviour.FIGHT));
+		add(new Scenario("crowd_vanilla", 1200, "The same 120 mobs with the mod's AI switched off (baseline).", (run, o) -> {},
+			mobs("zombie", 40, "skeleton", 20, "creeper", 10, "spider", 10, "villager", 15, "cow", 15, "pig", 10), 20, Behaviour.FIGHT));
 		add(new Scenario("kite", 1200, "Bot walks away steadily for 30 seconds, then stops.", (run, o) -> {},
 			mobs("zombie", 5, "spider", 2), 12, Behaviour.KITE));
 	}
@@ -234,6 +255,11 @@ public class Playtest implements ModInitializer {
 				&& (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow
 					|| source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball)) {
 				AiStats.add("trap_hit:" + BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).getPath());
+			}
+			if (current != null && entity instanceof Mob victim && victim.entityTags().contains(current.runTag)
+				&& source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow
+				&& source.getEntity() instanceof net.minecraft.world.entity.monster.skeleton.AbstractSkeleton) {
+				AiStats.add("friendly_fire_arrow");
 			}
 			if (current != null && current.bot != null && entity == current.bot.player) {
 				current.recordDamage(source, amount);
@@ -378,6 +404,11 @@ public class Playtest implements ModInitializer {
 			}
 
 			AiStats.reset();
+			com.mobsminecraft.ai.Flank.flanking = !this.scenario.name().equals("wave_classic");
+			AiStats.aiEnabled = !this.scenario.name().equals("crowd_vanilla");
+			AiStats.timing = this.scenario.name().startsWith("crowd") || this.scenario.bot() == Behaviour.PLAYER;
+			this.tickNanos = 0;
+			com.mobsminecraft.ai.Flank.holdFire = !this.scenario.name().equals("wave_classic");
 			cmd("tick sprint %d", this.scenario.ticks());
 		}
 
@@ -478,8 +509,16 @@ public class Playtest implements ModInitializer {
 		}
 
 		/** Advances one tick. Returns true when the run is over. */
+		private long tickNanos;
+		private long maxTickNanos;
+
 		boolean tick() {
 			this.ticks++;
+			if (this.ticks > 20) {
+				long last = this.server.getTickTimesNanos()[(this.server.getTickCount() + 99) % 100];
+				this.tickNanos += last;
+				this.maxTickNanos = Math.max(this.maxTickNanos, last);
+			}
 			if (this.ticks == 10) {
 				this.spawnMobs();
 			}
@@ -519,6 +558,25 @@ public class Playtest implements ModInitializer {
 				}
 			}
 			this.bot.tick();
+			if (this.scenario.name().equals("stealth_noisy") && this.ticks % 40 == 0) {
+				// Mining inside the room: loud.
+				com.mobsminecraft.ai.Awareness.noise(this.bot.player, this.bot.player.position(), 16.0);
+			}
+			if (this.scenario.name().equals("seen_then_hide") && this.ticks == 110) {
+				this.bot.teleport(Vec3.atBottomCenterOf(this.origin.above().east(3)));
+			}
+			// Surround: in how many of the four quarters around the bot are there mobs within 4 blocks?
+			if (this.ticks % 20 == 0 && this.bot.player.isAlive() && this.scenario.bot() != Behaviour.SPECTATE) {
+				boolean[] q = new boolean[4];
+				for (Tracked t : this.tracked) {
+					if (t.mob.isAlive() && t.mob.distanceTo(this.bot.player) < 4.0) {
+						double a = Math.atan2(t.mob.getZ() - this.bot.player.getZ(), t.mob.getX() - this.bot.player.getX());
+						q[(int) ((a + Math.PI) / (Math.PI / 2)) & 3] = true;
+					}
+				}
+				int n = (q[0] ? 1 : 0) + (q[1] ? 1 : 0) + (q[2] ? 1 : 0) + (q[3] ? 1 : 0);
+				if (n > 0) AiStats.add("surround_sides_" + n);
+			}
 			if (this.ticks == 15 && this.scenario.name().equals("trap_test")) {
 				for (Tracked t : this.tracked) {
 					((com.mobsminecraft.SmartMobHolder) t.mob).mmc$getBrain().debugMakeEngineer();
@@ -559,6 +617,7 @@ public class Playtest implements ModInitializer {
 						case "loot" -> { brain.debugPersonality("fighter"); if (pi++ % 2 == 0) brain.debugForce("greedy"); }
 						case "cleanup" -> { brain.debugPersonality("builder"); if (pi++ == 0) brain.debugForce("mess"); }
 						case "hero" -> brain.debugPersonality("hero");
+						case "anvil_warn" -> { brain.debugPersonality("tactician"); brain.debugForce("anvils"); }
 						case "gifters" -> brain.debugPersonality("gifter");
 						case "roles" -> brain.debugPersonality(new String[] {"builder", "crafter", "engineer", "mineman"}[pi++ % 4]);
 						case "griefers" -> brain.debugPersonality("griefer");
@@ -776,6 +835,16 @@ public class Playtest implements ModInitializer {
 				for (String v : this.census.values()) pairs.merge(v, 1, Integer::sum);
 				sb.append("  type/personality ").append(pairs).append('\n');
 			}
+			if (AiStats.timing || this.scenario.name().startsWith("crowd")) {
+				int n = Math.max(1, this.ticks - 20);
+				sb.append(String.format(Locale.ROOT, "Server tick: avg %.2f ms, worst %.1f ms. Smart brain: %.2f ms per tick in total (%.1f us per mob-tick).%n",
+					this.tickNanos / 1e6 / n, this.maxTickNanos / 1e6, AiStats.brainNanos() / 1e6 / n,
+					AiStats.brainTicks() == 0 ? 0.0 : AiStats.brainNanos() / 1e3 / AiStats.brainTicks()));
+				StringBuilder brainByType = new StringBuilder("  brain time by mob type (ms per tick):");
+				AiStats.brainTimeByType().entrySet().stream().sorted(Map.Entry.<String, Long>comparingByValue().reversed()).limit(8)
+					.forEach(e -> brainByType.append(String.format(Locale.ROOT, " %s=%.2f", e.getKey(), e.getValue() / 1e6 / n)));
+				sb.append(brainByType).append('\n');
+			}
 			sb.append("AI actions: ").append(AiStats.snapshot().isEmpty() ? "none" : AiStats.snapshot().toString()).append('\n');
 			String report = sb.toString();
 			LOG.info("\n{}", report);
@@ -790,6 +859,8 @@ public class Playtest implements ModInitializer {
 			cmd("kill @e[type=!player,x=%d,y=100,z=%d,dx=%d,dy=90,dz=80]", x - 40, z - 40, 120);
 			cmd("forceload remove %d %d %d %d", x - 40, z - 40, x + 80, z + 40);
 			cmd("tick unfreeze");
+			AiStats.aiEnabled = true;
+			AiStats.timing = false;
 			if (this.scenario.bot() == Behaviour.PLAYER) {
 				cmd("modsmac nametags false");
 				cmd("gamerule spawn_mobs false");

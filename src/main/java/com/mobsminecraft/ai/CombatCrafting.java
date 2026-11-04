@@ -156,12 +156,12 @@ final class CombatCrafting {
 		brain.anvilCooldown = 300 + r.nextInt(300);
 		BlockPos head = BlockPos.containing(target.position().add(target.getKnownMovement().multiply(2.0, 0.0, 2.0)));
 		int dropped = 0;
-		if (dropOver(level, head, r)) {
+		if (dropOver(brain, level, head, r)) {
 			dropped++;
 		}
 		if (brain.anvils >= 3 && r.nextFloat() < 0.1F) {
 			for (int i = 0; i < 2; i++) {
-				if (dropOver(level, head.relative(Direction.Plane.HORIZONTAL.getRandomDirection(r)), r)) {
+				if (dropOver(brain, level, head.relative(Direction.Plane.HORIZONTAL.getRandomDirection(r)), r)) {
 					dropped++;
 				}
 			}
@@ -175,14 +175,14 @@ final class CombatCrafting {
 		}
 	}
 
-	private static boolean dropOver(ServerLevel level, BlockPos column, RandomSource r) {
+	private static boolean dropOver(SmartBrain brain, ServerLevel level, BlockPos column, RandomSource r) {
 		BlockPos drop = findDropSpot(level, column);
 		if (drop == null) {
 			return false;
 		}
-		BlockState anvil = Blocks.ANVIL.defaultBlockState().setValue(AnvilBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(r));
-		level.setBlock(drop, anvil, Block.UPDATE_ALL);
-		level.playSound(null, drop, SoundEvents.ANVIL_PLACE, SoundSource.HOSTILE, 0.6F, 1.0F);
+		// Fair warning: a creak and falling dust for a second before the anvil comes down.
+		brain.pendingAnvils.add(new long[] {drop.asLong(), 20});
+		level.playSound(null, drop, SoundEvents.ANVIL_PLACE, SoundSource.HOSTILE, 0.5F, 0.5F);
 		return true;
 	}
 
@@ -198,6 +198,29 @@ final class CombatCrafting {
 			}
 		}
 		return best;
+	}
+
+	/** Counts down the warned anvils and drops each one when its time is up. */
+	static void tickPendingAnvils(SmartBrain brain, ServerLevel level) {
+		if (brain.pendingAnvils.isEmpty()) {
+			return;
+		}
+		for (java.util.Iterator<long[]> it = brain.pendingAnvils.iterator(); it.hasNext();) {
+			long[] a = it.next();
+			BlockPos p = BlockPos.of(a[0]);
+			if (a[1] % 4 == 0) {
+				level.sendParticles(net.minecraft.core.particles.ParticleTypes.CLOUD, p.getX() + 0.5, p.getY() + 0.2, p.getZ() + 0.5, 4, 0.3, 0.05, 0.3, 0.0);
+				level.sendParticles(new net.minecraft.core.particles.BlockParticleOption(net.minecraft.core.particles.ParticleTypes.FALLING_DUST, Blocks.ANVIL.defaultBlockState()),
+					p.getX() + 0.5, p.getY(), p.getZ() + 0.5, 6, 0.3, 0.1, 0.3, 0.0);
+			}
+			if (--a[1] <= 0) {
+				it.remove();
+				if (level.getBlockState(p).canBeReplaced()) {
+					level.setBlock(p, Blocks.ANVIL.defaultBlockState().setValue(AnvilBlock.FACING, Direction.Plane.HORIZONTAL.getRandomDirection(level.getRandom())), Block.UPDATE_ALL);
+					level.playSound(null, p, SoundEvents.ANVIL_PLACE, SoundSource.HOSTILE, 0.6F, 1.0F);
+				}
+			}
+		}
 	}
 
 	// ------------------------------------------------------------------ ladders

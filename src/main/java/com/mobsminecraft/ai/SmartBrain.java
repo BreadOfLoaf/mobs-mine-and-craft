@@ -312,6 +312,17 @@ public final class SmartBrain {
 	private boolean ownNameTag;
 	private String nameTagText;
 
+	// What it knows about the player (see Awareness), investigating, flanking, anvil warnings
+	Player knownPlayer;
+	Vec3 knownPos;
+	long knownTick;
+	long lastSeenTick = -10000;
+	int investigateTicks;
+	int flankSlot = Integer.MIN_VALUE;
+	Vec3 flankBase;
+	int sidestepTicks;
+	final List<long[]> pendingAnvils = new ArrayList<>();
+
 	// Going after items on the ground (see Looting)
 	net.minecraft.world.entity.item.ItemEntity lootItem;
 	int lootTicks;
@@ -425,6 +436,7 @@ public final class SmartBrain {
 			case "clock" -> { this.engineer = true; this.rsCooldown = 0; this.combatCrafter = false; this.forceClock = true; }
 			case "brave" -> this.brave = true;
 			case "greedy" -> this.greedy = true;
+			case "anvils" -> { this.anvils = 6; this.anvilCooldown = 0; this.combatCrafter = false; this.engineer = false; }
 			case "engineer_now" -> { this.rsCooldown = 0; this.trapCooldown = 0; }
 			case "nosniper" -> { this.sniper = false; this.engineer = false; this.combatCrafter = false; this.wallCooldown = 0; }
 			case "mess" -> {
@@ -524,6 +536,41 @@ public final class SmartBrain {
 			return !(this.mob.getLastHurtByMob() == target && this.mob.tickCount - this.mob.getLastHurtByMobTimestamp() < 200);
 		}
 		return false;
+	}
+
+	/** No target, but it knows roughly where a player was: go and look, then look around, then give up. */
+	private boolean investigate(ServerLevel level) {
+		if (!(this.mob instanceof Enemy) || this.knownPos == null || !this.personality.usesTricks() && this.personality != Personality.FIGHTER
+			|| this.personality.peaceful() || this.personality.busyWithRole() || level.getGameTime() - this.knownTick > 400) {
+			this.investigateTicks = 0;
+			return false;
+		}
+		if (++this.investigateTicks > 300) {
+			this.knownPos = null;
+			this.knownPlayer = null;
+			this.investigateTicks = 0;
+			com.mobsminecraft.debug.AiStats.add("investigate_gave_up");
+			return false;
+		}
+		if (this.investigateTicks == 1) {
+			com.mobsminecraft.debug.AiStats.add("investigate");
+		}
+		if (this.mob.position().distanceToSqr(this.knownPos) > 4.0) {
+			this.walkTo(this.knownPos, this.walkSpeed());
+		} else {
+			// Arrived: look around.
+			this.holdStill();
+			float yaw = this.mob.getYHeadRot() + 9.0F;
+			this.mob.getLookControl().setLookAt(this.mob.getX() - Math.sin(Math.toRadians(yaw)) * 4, this.mob.getEyeY(), this.mob.getZ() + Math.cos(Math.toRadians(yaw)) * 4);
+		}
+		return true;
+	}
+
+	/** Called when a skeleton holds fire because an ally is in the way: shuffle sideways for a clear shot. */
+	public void stepAsideForShot() {
+		if (this.sniperPhase != 3 && this.coverPhase == 0) {
+			this.sidestepTicks = 12;
+		}
 	}
 
 	boolean eating() {
@@ -672,9 +719,21 @@ public final class SmartBrain {
 		if (Eating.tick(this, level)) {
 			return;
 		}
-		if (Griefer.grieves(this) && Griefer.dodgeTnt(this, level)) {
+		Awareness.tick(this, level);
+		CombatCrafting.tickPendingAnvils(this, level);
+		// Nobody (but a creeper) wants to be next to lit TNT.
+		if (!(this.mob instanceof net.minecraft.world.entity.monster.Creeper) && BlockWork.canBuild(this.mob) && Griefer.dodgeTnt(this, level)) {
 			this.cancelMining(level);
 			return;
+		}
+		if (this.sidestepTicks > 0 && target != null) {
+			this.sidestepTicks--;
+			Vec3 to = target.position().subtract(this.mob.position()).multiply(1.0, 0.0, 1.0);
+			if (to.lengthSqr() > 1.0E-4) {
+				Vec3 side = new Vec3(-to.z, 0.0, to.x).normalize().scale((this.mob.getId() & 1) == 0 ? 2.0 : -2.0);
+				this.mob.getNavigation().stop();
+				this.mob.getMoveControl().strafe(0.0F, (this.mob.getId() & 1) == 0 ? 0.6F : -0.6F);
+			}
 		}
 
 		if (!this.knightsSpawned) {
@@ -832,6 +891,10 @@ public final class SmartBrain {
 			if (this.mob.distanceTo(target) > 16.0F && !this.pickaxe.isEmpty() && this.tickDigTarget(level)) {
 				return;
 			}
+			this.updateReachable(target);
+			if (Flank.tick(this, level, target)) {
+				return;
+			}
 			if (this.isChaser(target)) {
 				this.chaseAssist(level, target);
 			}
@@ -839,6 +902,9 @@ public final class SmartBrain {
 		}
 
 		if (this.housePlan != null && this.tickBlueprint(level)) {
+			return;
+		}
+		if (this.investigate(level)) {
 			return;
 		}
 		if (Knights.stayClose(this, false)) {
@@ -945,10 +1011,9 @@ public final class SmartBrain {
 
 	private LivingEntity resolveTarget(ServerLevel level) {
 		if (this.initialized && this.personality == Personality.ENGINEER) {
-			// Engineers don't charge in: they keep an eye on the nearest player to set traps for.
-			Player p = level.getNearestPlayer(this.mob.getX(), this.mob.getY(), this.mob.getZ(), 28.0,
-				EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(e -> e.isAlive()));
-			return p;
+			// Engineers don't charge in: they set traps for a player they've seen or heard (not one hidden behind walls).
+			Player p = this.knownPlayer;
+			return p != null && p.isAlive() && level.getGameTime() - this.knownTick < 200 && p.distanceTo(this.mob) < 28.0F ? p : null;
 		}
 		if (this.initialized && this.personality.busyWithRole()) {
 			LivingEntity attacker = this.mob.getLastHurtByMob();
@@ -958,20 +1023,19 @@ public final class SmartBrain {
 		if (isValidTarget(t)) {
 			return t;
 		}
-		// Hostile mobs hunt players they can't see (hiding in a bunker, behind a wall) if they're close.
+		// Hostile mobs keep after a player who ducked out of sight, but only one they know is there: seen
+		// moments ago, heard (mining, fighting, footsteps), or reported by an ally. No seeing through walls.
 		if (this.mob instanceof Enemy && this.mob.tickCount % 20 == 0 && !(this.mob instanceof net.minecraft.world.entity.monster.Enderman)) {
-			Player hidden = level.getNearestPlayer(this.mob.getX(), this.mob.getY(), this.mob.getZ(), 20.0,
-				EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(e -> e.isAlive()));
-			if (hidden != null && !this.mob.hasLineOfSight(hidden)) {
+			Player hidden = this.knownPlayer;
+			if (hidden != null && hidden.distanceTo(this.mob) < 24.0F && !this.mob.hasLineOfSight(hidden) && Awareness.knowsWhere(this, hidden, 200)) {
 				this.mob.setTarget(hidden);
 				com.mobsminecraft.debug.AiStats.add("hunt_hidden");
 				return hidden;
 			}
 		}
 		if (this.mob instanceof Villager) {
-			Player p = level.getNearestPlayer(this.mob.getX(), this.mob.getY(), this.mob.getZ(), 16.0,
-				EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(e -> e.isAlive()));
-			if (p != null) {
+			Player p = this.knownPlayer;
+			if (p != null && p.isAlive() && p.distanceTo(this.mob) < 16.0F && level.getGameTime() - this.knownTick < 100) {
 				return p;
 			}
 		}
@@ -998,17 +1062,22 @@ public final class SmartBrain {
 
 	// ------------------------------------------------------------------ chasing: bridge, tunnel, tower, dig
 
+	/** Can the mob walk to the target? Re-checked once a second (it decides between flanking and building). */
+	private void updateReachable(LivingEntity target) {
+		if (--this.pathCheckCooldown <= 0) {
+			this.pathCheckCooldown = 20;
+			Path path = this.mob.getNavigation().createPath(target, 1);
+			this.targetReachable = path != null && path.canReach();
+		}
+	}
+
 	private void chaseAssist(ServerLevel level, LivingEntity target) {
 		// A player in the water isn't reached by bridging, towering or digging (boats handle that).
 		if (target.isInWater() || target.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.Boat) {
 			this.assistTicks = 0;
 			return;
 		}
-		if (--this.pathCheckCooldown <= 0) {
-			this.pathCheckCooldown = 20;
-			Path path = this.mob.getNavigation().createPath(target, 1);
-			this.targetReachable = path != null && path.canReach();
-		}
+		this.updateReachable(target);
 
 		// Progress check over 1-second windows: jittering back and forth on a dead-end path still counts as stuck.
 		if (this.mob.tickCount % 20 == 0) {
@@ -1455,7 +1524,7 @@ public final class SmartBrain {
 				this.logsChopped++;
 				this.woodLog = state.getBlock();
 				// Keep chopping the rest of the tree.
-				BlockPos nextLog = BlockWork.findNearestAt(level, broken, 2, (p, st) -> st.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, st) && BlockWork.canMine(this.mob, level, p, st));
+				BlockPos nextLog = BlockWork.findNearestAt(level, broken, 2, st0 -> st0.is(BlockTags.LOGS), (p, st) -> st.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, st) && BlockWork.canMine(this.mob, level, p, st));
 				if (nextLog != null) {
 					this.setDigTarget(nextLog, false);
 				}
@@ -1887,10 +1956,10 @@ public final class SmartBrain {
 		if (this.oreCooldown == 0) {
 			this.oreCooldown = 100 + r.nextInt(150);
 			if (r.nextFloat() < 0.85F) {
-				BlockPos ore = BlockWork.findNearestAt(level, here, 12, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s)
+				BlockPos ore = BlockWork.findNearestAt(level, here, 12, BlockWork::isOre, (p, s) -> BlockWork.isOre(s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s)
 					&& (!this.isPassive() || p.getY() >= here.getY() - 1));
 				if (ore == null && !this.isPassive()) {
-					ore = BlockWork.findNearestAt(level, here, 8, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
+					ore = BlockWork.findNearestAt(level, here, 8, BlockWork::isOre, (p, s) -> BlockWork.isOre(s) && BlockWork.canMine(this.mob, level, p, s));
 				}
 				if (ore != null) {
 					this.setDigTarget(ore, true);
@@ -1901,7 +1970,7 @@ public final class SmartBrain {
 		boolean passive = this.isPassive();
 		if (this.gatherCooldown == 0 && this.blocks < (passive ? 112 : 64)) {
 			this.gatherCooldown = passive ? 80 + r.nextInt(160) : 200 + r.nextInt(300);
-			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
+			BlockPos log = BlockWork.findNearestAt(level, here, passive ? 10 : 6, st -> st.is(BlockTags.LOGS), (p, s) -> s.is(BlockTags.LOGS) && BlockWork.isNatural(level, p, s) && BlockWork.isExposed(level, p) && BlockWork.canMine(this.mob, level, p, s));
 			if (log == null && passive) {
 				// Passive mobs quarry stone into cobblestone.
 				log = BlockWork.findNearestAt(level, here, 5, (p, st) -> st.is(BlockTags.BASE_STONE_OVERWORLD) && BlockWork.isNatural(level, p, st) && p.getY() >= here.getY()

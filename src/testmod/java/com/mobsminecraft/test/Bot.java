@@ -113,6 +113,9 @@ final class Bot {
 
 	/** Moves the bot a step toward a point at walking pace (it doesn't simulate physics). */
 	void walkToward(Vec3 goal, double speed) {
+		if (this.player.tickCount % 5 == 0) {
+			com.mobsminecraft.ai.Awareness.noise(this.player, this.player.position(), 7.0);
+		}
 		Vec3 here = this.player.position();
 		Vec3 d = goal.subtract(here).multiply(1.0, 0.0, 1.0);
 		if (d.length() < speed) {
@@ -128,6 +131,7 @@ final class Bot {
 
 	/** Swings at a mob within reach. */
 	void attack(LivingEntity target) {
+		com.mobsminecraft.ai.Awareness.noise(this.player, this.player.position(), 16.0);
 		this.player.lookAt(net.minecraft.commands.arguments.EntityAnchorArgument.Anchor.EYES, target.getEyePosition());
 		this.player.attack(target);
 		this.player.resetAttackStrengthTicker();

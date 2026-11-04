@@ -76,9 +76,14 @@ final class Personalities {
 		return true;
 	}
 
+	/** The player this mob knows about (saw, heard or was told of recently) if within range; no wallhacks. */
 	private static Player nearestPlayer(ServerLevel level, Mob mob, double radius) {
-		return level.getNearestPlayer(mob.getX(), mob.getY(), mob.getZ(), radius,
-			net.minecraft.world.entity.EntitySelector.NO_CREATIVE_OR_SPECTATOR.and(Entity::isAlive));
+		SmartBrain b = ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain();
+		Player p = b.knownPlayer;
+		if (p == null || !p.isAlive() || p.isSpectator() || p.isCreative() || level.getGameTime() - b.knownTick > 100 || p.distanceTo(mob) > radius) {
+			return null;
+		}
+		return p;
 	}
 
 	/** Throws an item in an arc to land at someone's feet. */

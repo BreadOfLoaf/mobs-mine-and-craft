@@ -81,6 +81,9 @@ final class SurvivalBot {
 			if (open(f) && open(f.above()) && solid(f.below())) {
 				if (dy == 1 && !open(BlockPos.containing(here).above(2))) break; // no headroom to step up
 				this.bot.teleport(new Vec3(next.x, f.getY(), next.z));
+				if (p.tickCount % 5 == 0) {
+					com.mobsminecraft.ai.Awareness.noise(p, p.position(), 7.0);
+				}
 				return;
 			}
 		}
@@ -124,6 +127,7 @@ final class SurvivalBot {
 				}
 		if (ore != null) {
 			this.level.destroyBlock(ore, true, p);
+			com.mobsminecraft.ai.Awareness.noise(p, Vec3.atCenterOf(ore), 16.0);
 			this.blocksMined++;
 			AiStats.add("bot_mined_ore");
 			return;
@@ -135,6 +139,7 @@ final class SurvivalBot {
 		if (!this.level.getFluidState(b).isEmpty() || !this.level.getFluidState(b.above()).isEmpty()) return;
 		if (!open(b) && minable(this.level.getBlockState(b)) && !this.level.getBlockState(b).is(Blocks.BEDROCK)) {
 			this.level.destroyBlock(b, true, p);
+			com.mobsminecraft.ai.Awareness.noise(p, Vec3.atCenterOf(b), 16.0);
 			this.blocksMined++;
 		}
 	}

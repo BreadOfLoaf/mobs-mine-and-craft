@@ -52,7 +52,14 @@ public abstract class MobMixin implements SmartMobHolder {
 	)
 	private void mmc$tickSmartBrain(CallbackInfo ci) {
 		Mob self = (Mob) (Object) this;
-		if (self.isAlive()) {
+		if (!self.isAlive() || !com.mobsminecraft.debug.AiStats.aiEnabled) {
+			return;
+		}
+		if (com.mobsminecraft.debug.AiStats.timing) {
+			long t = System.nanoTime();
+			this.mmc$getBrain().tick();
+			com.mobsminecraft.debug.AiStats.addBrainTime(System.nanoTime() - t, self.getType().toShortString());
+		} else {
 			this.mmc$getBrain().tick();
 		}
 	}

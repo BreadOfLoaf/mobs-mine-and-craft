@@ -25,6 +25,18 @@ public class MobsMineAndCraft implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		ServerTickEvents.END_LEVEL_TICK.register(TimedCleanup::tick);
+		// What mobs can hear: footsteps nearby, blocks being broken, fighting.
+		ServerTickEvents.END_LEVEL_TICK.register(level -> {
+			if (level.getGameTime() % 5 == 0) {
+				com.mobsminecraft.ai.Awareness.footsteps(level);
+			}
+		});
+		net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) ->
+			com.mobsminecraft.ai.Awareness.noise(player, net.minecraft.world.phys.Vec3.atCenterOf(pos), 16.0));
+		net.fabricmc.fabric.api.event.player.AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
+			com.mobsminecraft.ai.Awareness.noise(player, player.position(), 16.0);
+			return net.minecraft.world.InteractionResult.PASS;
+		});
 		// /modsmac nametags true|false: show every mob's personality above its head (for debugging).
 		net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
 			net.minecraft.commands.Commands.literal("modsmac")
