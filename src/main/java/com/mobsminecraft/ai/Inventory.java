@@ -106,35 +106,12 @@ public final class Inventory {
 
 	// ------------------------------------------------------------------ dropping
 
-	/**
-	 * Drops a realistic share of the inventory: everything it picked up, a handful of building blocks,
-	 * one to three of each consumable, and sometimes its spare pickaxe. Equipment drops through vanilla.
-	 */
+	/** Drops what the mob picked up (often the player's own items). Its gear drops at vanilla rates. */
 	public static void dropAll(SmartBrain brain, ServerLevel level) {
-		Mob mob = brain.mob;
-		RandomSource r = mob.getRandom();
 		for (ItemStack stack : brain.loot) {
-			mob.spawnAtLocation(level, stack);
+			brain.mob.spawnAtLocation(level, stack);
 		}
 		brain.loot.clear();
-		for (Consumable.Carried c : brain.carried) {
-			for (ItemStack stack : toItems(c)) {
-				if (stack.getMaxStackSize() > 1) {
-					stack.setCount(Math.min(stack.getCount(), 1 + r.nextInt(3)));
-				}
-				mob.spawnAtLocation(level, stack);
-				break;
-			}
-		}
-		brain.carried.clear();
-		int blocks = Math.min(brain.blocks, 3 + r.nextInt(6));
-		if (blocks > 0) {
-			mob.spawnAtLocation(level, new ItemStack(brain.primaryBlock().asItem(), blocks));
-		}
-		brain.blocks = 0;
-		if (!brain.pickaxe.isEmpty() && r.nextFloat() < 0.25F) {
-			mob.spawnAtLocation(level, brain.pickaxe.copy());
-		}
 	}
 
 	// ------------------------------------------------------------------ consumables <-> items

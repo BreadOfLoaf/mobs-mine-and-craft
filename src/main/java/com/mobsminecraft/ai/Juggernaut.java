@@ -61,6 +61,6 @@ final class Juggernaut {
 
 	private static void equip(Mob mob, EquipmentSlot slot, net.minecraft.world.item.Item item) {
 		mob.setItemSlot(slot, new ItemStack(item));
-		mob.setDropChance(slot, 2.0F);
+		mob.setDropChance(slot, 0.05F);
 	}
 }

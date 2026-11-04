@@ -62,6 +62,37 @@ final class Houses {
 		return ALL[r.nextInt(ALL.length)];
 	}
 
+	/** Underground houses: stone and deepslate, iron-bar windows. */
+	private static final Palette[] CAVE = {
+		new Palette(Blocks.COBBLED_DEEPSLATE, Blocks.POLISHED_DEEPSLATE, Blocks.DEEPSLATE_TILES, null, Blocks.DEEPSLATE_TILES, Blocks.DARK_OAK_DOOR, Blocks.IRON_BARS),
+		new Palette(Blocks.STONE_BRICKS, Blocks.CHISELED_STONE_BRICKS, Blocks.STONE_BRICKS, null, Blocks.SPRUCE_PLANKS, Blocks.SPRUCE_DOOR, Blocks.IRON_BARS),
+		new Palette(Blocks.MOSSY_COBBLESTONE, Blocks.COBBLESTONE, Blocks.COBBLESTONE, null, Blocks.OAK_PLANKS, Blocks.OAK_DOOR, Blocks.IRON_BARS),
+		new Palette(Blocks.TUFF_BRICKS, Blocks.POLISHED_TUFF, Blocks.TUFF_BRICKS, null, Blocks.POLISHED_TUFF, Blocks.SPRUCE_DOOR, Blocks.IRON_BARS),
+		new Palette(Blocks.POLISHED_ANDESITE, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, null, Blocks.DARK_OAK_PLANKS, Blocks.DARK_OAK_DOOR, Blocks.IRON_BARS),
+	};
+
+	static Palette randomCave(RandomSource r) {
+		return CAVE[r.nextInt(CAVE.length)];
+	}
+
+	/** True if another mob build (a door, bed, rail, lantern or campfire) is within 14 blocks. */
+	static boolean tooCrowded(ServerLevel level, BlockPos pos) {
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		for (int x = -14; x <= 14; x++) {
+			for (int z = -14; z <= 14; z++) {
+				for (int y = -4; y <= 6; y++) {
+					p.set(pos.getX() + x, pos.getY() + y, pos.getZ() + z);
+					BlockState s = level.getBlockState(p);
+					if ((s.is(net.minecraft.tags.BlockTags.DOORS) || s.is(net.minecraft.tags.BlockTags.BEDS) || s.is(Blocks.RAIL)
+						|| s.is(Blocks.LANTERN) || s.is(Blocks.CAMPFIRE)) && MobBuilt.contains(level, p)) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	/** The house style for the wood a mob chopped, so passive mobs build with what they gathered. */
 	static Palette forLog(Block log) {
 		if (log == Blocks.SPRUCE_LOG) return SPRUCE;
@@ -73,20 +104,27 @@ final class Houses {
 		return OAK;
 	}
 
-	/** Plans a house at the mob's position. Returns false if the spot is unsuitable. */
-	static boolean plan(SmartBrain brain, ServerLevel level, Palette p) {
+	/**
+	 * Plans a house at the mob's position. Surface houses ({@code cave} false) are only built where the sky
+	 * is visible; cave houses are dug out of the rock (if the mob can) with a flat ceiling. Returns false
+	 * if the spot is unsuitable.
+	 */
+	static boolean plan(SmartBrain brain, ServerLevel level, Palette p, boolean cave) {
 		Mob mob = brain.mob;
 		RandomSource r = mob.getRandom();
 		BlockPos c = mob.blockPosition();
-		int hx = 2 + r.nextInt(4);
-		int hz = 2 + r.nextInt(3);
+		if (cave != Outpost.isUnderground(level, mob) || tooCrowded(level, c)) {
+			return false;
+		}
+		int hx = 2 + r.nextInt(cave ? 2 : 4);
+		int hz = 2 + r.nextInt(cave ? 2 : 3);
 		if (r.nextBoolean()) {
 			int t = hx;
 			hx = hz;
 			hz = t;
 		}
-		int wallH = 3 + r.nextInt(3);
-		Roof roof = p.stairs() == null ? Roof.FLAT : switch (r.nextInt(20)) {
+		int wallH = cave ? 3 + r.nextInt(2) : 3 + r.nextInt(3);
+		Roof roof = cave || p.stairs() == null ? Roof.FLAT : switch (r.nextInt(20)) {
 			case 0, 1, 2, 3 -> Roof.FLAT;
 			case 4, 5, 6, 7, 8, 9, 10, 11 -> Roof.GABLE;
 			default -> Roof.PYRAMID;
@@ -108,8 +146,14 @@ final class Houses {
 					obstacles++;
 				}
 				for (int y = 0; y < wallH; y++) {
-					if (!level.getBlockState(c.offset(x, y, z)).canBeReplaced()) {
+					BlockPos q = c.offset(x, y, z);
+					BlockState s = level.getBlockState(q);
+					boolean diggable = cave && BlockWork.canMine(mob, level, q, s);
+					if (!s.canBeReplaced() && !diggable) {
 						obstacles++;
+					}
+					if (cave && !s.getFluidState().isEmpty()) {
+						return false;
 					}
 				}
 			}
@@ -120,6 +164,17 @@ final class Houses {
 
 		List<BlockPos> plan = new ArrayList<>();
 		List<BlockState> states = new ArrayList<>();
+		if (cave) {
+			// Dig the room out first (top down).
+			for (int y = wallH - 1; y >= 0; y--) {
+				for (int x = -hx; x <= hx; x++) {
+					for (int z = -hz; z <= hz; z++) {
+						plan.add(c.offset(x, y, z));
+						states.add(Outpost.DIG);
+					}
+				}
+			}
+		}
 		Direction doorSide = Direction.Plane.HORIZONTAL.getRandomDirection(r);
 		int doorX = doorSide.getStepX() * hx;
 		int doorZ = doorSide.getStepZ() * hz;
@@ -170,7 +225,7 @@ final class Houses {
 			case GABLE -> gableRoof(c, hx, hz, wallH, p, roofPlan, roofStates);
 			case PYRAMID -> pyramidRoof(c, hx, hz, wallH, p, roofPlan, roofStates);
 		};
-		if (r.nextFloat() < 0.35F && p.stairs() != null) {
+		if (!cave && r.nextFloat() < 0.35F && p.stairs() != null) {
 			int cx = hx - 1;
 			int cz = -(hz - 1);
 			for (int y = wallH - 1; y <= top + 1; y++) {
@@ -187,14 +242,14 @@ final class Houses {
 
 		// Outside: a dirt path from the door and some flowers.
 		BlockPos doorPos = c.offset(doorX, 0, doorZ);
-		if (r.nextFloat() < 0.5F) {
+		if (!cave && r.nextFloat() < 0.5F) {
 			int len = 2 + r.nextInt(4);
 			for (int i = 1; i <= len; i++) {
 				plan.add(doorPos.relative(doorSide, i).below());
 				states.add(Blocks.DIRT_PATH.defaultBlockState());
 			}
 		}
-		if (r.nextFloat() < 0.4F) {
+		if (!cave && r.nextFloat() < 0.4F) {
 			Direction side = doorSide.getClockWise();
 			Block flower = r.nextBoolean() ? Blocks.POPPY : Blocks.DANDELION;
 			plan.add(doorPos.relative(doorSide).relative(side, 2));

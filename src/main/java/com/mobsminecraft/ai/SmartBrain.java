@@ -171,6 +171,19 @@ public final class SmartBrain {
 	Block woodLog = Blocks.OAK_LOG;
 	int houseCooldown;
 
+	// Mid-fight crafting at a table: ladders, buckets, anvils (see CombatCrafting)
+	boolean combatCrafter;
+	int combatCraftCooldown;
+	CombatCrafting.Craft crafting;
+	int craftTicks;
+	BlockPos craftTable;
+	int ladders;
+	int anvils;
+	int anvilCooldown;
+	int climbTicks;
+	BlockPos climbToward;
+	private int buildWalkTicks;
+
 	// Creeper TNT waiting to be lit (see MobSpecials)
 	final List<BlockPos> unlitTnt = new ArrayList<>();
 	int tntLightTicks;
@@ -218,16 +231,14 @@ public final class SmartBrain {
 		this.decorCooldown = 300 + r.nextInt(1200);
 		this.oreCooldown = 100 + r.nextInt(300);
 		this.gatherCooldown = 100 + r.nextInt(300);
-		this.houseBuilder = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.isPassive() ? 0.3F : 0.08F);
-		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.3F;
+		this.houseBuilder = BlockWork.canBuild(this.mob) && r.nextFloat() < (this.isPassive() ? 0.12F : 0.04F);
+		this.outpostBuilder = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.15F;
+		this.combatCrafter = this.mob instanceof Enemy && BlockWork.canBuild(this.mob) && r.nextFloat() < 0.4F;
+		this.combatCraftCooldown = 200 + r.nextInt(400);
 		this.outpostCooldown = 200 + r.nextInt(600);
 		this.cookCooldown = 400 + r.nextInt(1200);
 		if (this.isPassive()) {
 			this.gatherCooldown = 60 + r.nextInt(200);
-		}
-		// Everything a mob holds or wears drops when it dies, and every mob can pick up gear.
-		for (EquipmentSlot slot : EquipmentSlot.VALUES) {
-			this.mob.setDropChance(slot, 2.0F);
 		}
 		boolean vanillaPickup = this.mob instanceof Villager || this.mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin;
 		this.mob.setCanPickUpLoot(vanillaPickup);
@@ -316,6 +327,9 @@ public final class SmartBrain {
 			this.tickFlee(level);
 			return;
 		}
+		if (CombatCrafting.tickClimb(this)) {
+			return;
+		}
 		if (this.wallPlan != null) {
 			this.tickWall(level);
 		}
@@ -330,9 +344,17 @@ public final class SmartBrain {
 				this.startEscape(target);
 				return;
 			}
+			// A builder stays on its build; in a group of builders, one keeps building and the rest fight.
+			if (this.housePlan != null && this.isLeadBuilder(level) && this.tickBlueprint(level)) {
+				return;
+			}
 			if (MobSpecials.trySniper(this, level, target)) {
 				return;
 			}
+			if (CombatCrafting.tick(this, level, target, griefing)) {
+				return;
+			}
+			CombatCrafting.dropAnvil(this, level, target);
 			if (this.gardener && Gardening.tryTreeTrap(this, level, target)) {
 				return;
 			}
@@ -355,11 +377,11 @@ public final class SmartBrain {
 		if (this.housePlan == null && this.outpostBuilder && this.outpostCooldown == 0 && this.mob.onGround()
 			&& Outpost.isUnderground(level, this.mob) && this.mob.getRandom().nextInt(100) == 0) {
 			this.outpostCooldown = 600;
-			Outpost.plan(this, level);
+			Underground.plan(this, level);
 		}
-		if (this.housePlan == null && this.isPassive() && this.logsChopped >= 5 && this.houseCooldown == 0
+		if (this.housePlan == null && this.isPassive() && this.logsChopped >= 10 && this.houseCooldown == 0
 			&& this.mob.onGround() && this.mob.getRandom().nextInt(40) == 0) {
-			if (Houses.plan(this, level, Houses.forLog(this.woodLog))) {
+			if (Houses.plan(this, level, Houses.forLog(this.woodLog), false)) {
 				this.logsChopped = 0;
 			} else {
 				this.houseCooldown = 200;
@@ -393,6 +415,8 @@ public final class SmartBrain {
 		if (this.outpostCooldown > 0) this.outpostCooldown--;
 		if (this.cookCooldown > 0) this.cookCooldown--;
 		if (this.houseCooldown > 0) this.houseCooldown--;
+		if (this.combatCraftCooldown > 0) this.combatCraftCooldown--;
+		if (this.anvilCooldown > 0) this.anvilCooldown--;
 		if (this.assistTicks > 0) this.assistTicks--;
 		if (this.coverCooldown > 0) this.coverCooldown--;
 		if (this.gatherCooldown > 0) this.gatherCooldown--;
@@ -477,6 +501,9 @@ public final class SmartBrain {
 		double dy = target.getY() - this.mob.getY();
 		double horiz = Math.sqrt(dx * dx + dz * dz);
 
+		if (CombatCrafting.tryLadders(this, level, dx, dy, dz, horiz)) {
+			return;
+		}
 		if (dy > 1.5 && horiz < 2.5) {
 			this.startTower(Mth.ceil(dy));
 			return;
@@ -895,7 +922,7 @@ public final class SmartBrain {
 		}
 		if (this.craftingTicks >= 50) {
 			this.mob.setItemSlot(EquipmentSlot.MAINHAND, randomTool(this.mob.getRandom()));
-			this.mob.setDropChance(EquipmentSlot.MAINHAND, 2.0F);
+			this.mob.setDropChance(EquipmentSlot.MAINHAND, 0.15F);
 			level.playSound(null, this.mob.blockPosition(), SoundEvents.ITEM_PICKUP, SoundSource.HOSTILE, 0.8F, 1.0F);
 			this.craftingTicks = 0;
 			this.toolCraftTimer = -1;
@@ -983,16 +1010,22 @@ public final class SmartBrain {
 		}
 		Vec3 c = Vec3.atBottomCenterOf(this.houseCenter);
 		double distSq = this.mob.distanceToSqr(c);
-		if (distSq > (this.castleBuilder ? 256.0 : 100.0)) {
+		if (distSq > 1024.0) {
 			this.housePlan = null;
+			this.buildingOutpost = false;
 			return false;
 		}
-		if (distSq > 1.0) {
+		// Long builds (mineshafts): walk along to the next block when it's out of reach.
+		BlockPos nextPos = this.housePlan.get(Math.min(this.houseIndex, this.housePlan.size() - 1));
+		Vec3 goal = this.mob.distanceToSqr(Vec3.atCenterOf(nextPos)) > 36.0 ? Vec3.atBottomCenterOf(nextPos) : c;
+		if (this.mob.distanceToSqr(goal) > (goal == c ? 1.0 : 25.0) && this.buildWalkTicks < 100) {
+			this.buildWalkTicks++;
 			if (this.mob.tickCount % 10 == 0) {
-				this.mob.getNavigation().moveTo(c.x, c.y, c.z, this.walkSpeed());
+				this.mob.getNavigation().moveTo(goal.x, goal.y, goal.z, this.walkSpeed());
 			}
 			return true;
 		}
+		this.buildWalkTicks = 0;
 		this.holdStill();
 		if (++this.buildTick % this.buildInterval != 0) {
 			return true;
@@ -1010,14 +1043,14 @@ public final class SmartBrain {
 			this.housePlan = null;
 			if (this.buildingOutpost) {
 				this.buildingOutpost = false;
-				this.outpostCooldown = 2400 + this.mob.getRandom().nextInt(2400);
+				this.outpostCooldown = 4800 + this.mob.getRandom().nextInt(4800);
 				return true;
 			}
 			if (this.castleBuilder) {
 				this.houseBuilt = true;
 				this.castleCenter = this.houseCenter;
 			} else if (this.isPassive()) {
-				this.houseCooldown = 2400 + this.mob.getRandom().nextInt(2400);
+				this.houseCooldown = 6000 + this.mob.getRandom().nextInt(6000);
 			} else {
 				this.houseBuilt = true;
 			}
@@ -1085,8 +1118,27 @@ public final class SmartBrain {
 		return true;
 	}
 
+	/** Surface houses above ground; underground, an outpost, cave house or mineshaft instead. */
 	private void planHouse(ServerLevel level) {
-		Houses.plan(this, level, Houses.random(this.mob.getRandom()));
+		if (Outpost.isUnderground(level, this.mob)) {
+			Underground.plan(this, level);
+		} else {
+			Houses.plan(this, level, Houses.random(this.mob.getRandom()), false);
+		}
+	}
+
+	/** True unless another mob within 16 blocks with its own build in progress has a lower id. */
+	private boolean isLeadBuilder(ServerLevel level) {
+		for (Mob other : level.getEntitiesOfClass(Mob.class, this.mob.getBoundingBox().inflate(16.0), m -> m != this.mob && m.isAlive())) {
+			if (brainOf(other).housePlan != null && other.getId() < this.mob.getId()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static SmartBrain brainOf(Mob mob) {
+		return ((com.mobsminecraft.SmartMobHolder) mob).mmc$getBrain();
 	}
 
 	private BlockState makeshiftState(RandomSource r) {
