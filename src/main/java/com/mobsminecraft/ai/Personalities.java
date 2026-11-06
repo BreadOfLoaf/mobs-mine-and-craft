@@ -148,7 +148,8 @@ final class Personalities {
 		Item[] stuff = {Items.BREAD, Items.COOKED_BEEF, Items.GOLDEN_APPLE, Items.ARROW, Items.ENDER_PEARL, Items.TORCH, Items.COAL,
 			Items.IRON_INGOT, Items.APPLE, Items.COOKED_PORKCHOP, Items.WATER_BUCKET, Items.SNOWBALL, Items.OAK_LOG};
 		Item item = stuff[r.nextInt(stuff.length)];
-		return new ItemStack(item, Math.min(item.getDefaultMaxStackSize(), item == Items.GOLDEN_APPLE ? 1 : 1 + r.nextInt(8)));
+		int count = item == Items.GOLDEN_APPLE ? 1 : item == Items.ENDER_PEARL ? 1 + r.nextInt(2) : 1 + r.nextInt(8);
+		return new ItemStack(item, Math.min(item.getDefaultMaxStackSize(), count));
 	}
 
 	// ------------------------------------------------------------------ mineman
