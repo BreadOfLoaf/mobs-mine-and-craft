@@ -34,7 +34,7 @@ final class Looting {
 		if (item == null && mob.tickCount % 10 == 0) {
 			ItemEntity best = null;
 			for (ItemEntity e : level.getEntitiesOfClass(ItemEntity.class, mob.getBoundingBox().inflate(radius, 3.0, radius),
-				e -> e.isAlive() && wants(b, e.getItem()))) {
+				e -> e.isAlive() && !Piglins.forPlayers(e) && wants(b, e.getItem()))) {
 				if (best == null || e.distanceToSqr(mob) < best.distanceToSqr(mob)) {
 					best = e;
 				}

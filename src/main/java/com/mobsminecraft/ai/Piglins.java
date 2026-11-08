@@ -57,6 +57,11 @@ public final class Piglins {
 		return piglin.getBrain().getMemory(MemoryModuleType.ANGRY_AT).map(u -> u.equals(who.getUUID())).orElse(false);
 	}
 
+	/** Something a piglin threw (a trade): it's for players, so no mob picks it up. */
+	public static boolean forPlayers(net.minecraft.world.entity.item.ItemEntity item) {
+		return item.getOwner() instanceof AbstractPiglin;
+	}
+
 	/** Golden armour pieces count as barter currency, like gold ingots. */
 	public static boolean isGoldenArmor(ItemStack stack) {
 		return stack.is(Items.GOLDEN_HELMET) || stack.is(Items.GOLDEN_CHESTPLATE) || stack.is(Items.GOLDEN_LEGGINGS) || stack.is(Items.GOLDEN_BOOTS)
@@ -68,10 +73,13 @@ public final class Piglins {
 	 * 2.5% chance of swapping the trade for one pearl brings that to about 4.6%.
 	 */
 	public static List<ItemStack> morePearls(RandomSource r, List<ItemStack> vanilla) {
-		if (r.nextFloat() >= 0.025F || vanilla.stream().anyMatch(st -> st.is(Items.ENDER_PEARL))) {
-			return vanilla;
+		com.mobsminecraft.debug.AiStats.add("barter_trade");
+		List<ItemStack> out = vanilla;
+		if (r.nextFloat() < 0.025F && vanilla.stream().noneMatch(st -> st.is(Items.ENDER_PEARL))) {
+			com.mobsminecraft.debug.AiStats.add("barter_extra_pearl");
+			out = List.of(new ItemStack(Items.ENDER_PEARL));
 		}
-		com.mobsminecraft.debug.AiStats.add("barter_extra_pearl");
-		return List.of(new ItemStack(Items.ENDER_PEARL));
+		com.mobsminecraft.debug.AiStats.add("barter_items_out", out.stream().mapToInt(ItemStack::getCount).sum());
+		return out;
 	}
 }

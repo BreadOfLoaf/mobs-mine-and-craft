@@ -22,8 +22,27 @@ public class MobsMineAndCraft implements ModInitializer {
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 	private static final String ARROW_TAG = MOD_ID + ".enchanted_arrow";
 
+	/** Test switch: log who removes piglin trades (set by the playtest harness). */
+	public static boolean DEBUG_TRADES = false;
+	private static int TRADE_TRACES;
+
 	@Override
 	public void onInitialize() {
+		// Piglin trades are for the player: nothing (fire, lava, explosions, cactus) destroys them while they lie there.
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
+			if (entity instanceof net.minecraft.world.entity.item.ItemEntity item && com.mobsminecraft.ai.Piglins.forPlayers(item)) {
+				item.setPermanentlyInvulnerable(true);
+			}
+		});
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents.ENTITY_UNLOAD.register((entity, level) -> {
+			if (DEBUG_TRADES && entity instanceof net.minecraft.world.entity.item.ItemEntity item && com.mobsminecraft.ai.Piglins.forPlayers(item)
+				&& entity.getRemovalReason() != null && entity.getRemovalReason().shouldDestroy()) {
+				com.mobsminecraft.debug.AiStats.add("trade_removed:" + entity.getRemovalReason(), item.getItem().getCount());
+				if (TRADE_TRACES++ < 12) {
+					LOGGER.info("[tradedebug] {} x{} removed ({})", item.getItem().getItem(), item.getItem().getCount(), entity.getRemovalReason(), new Throwable("removed here"));
+				}
+			}
+		});
 		ServerTickEvents.END_LEVEL_TICK.register(TimedCleanup::tick);
 		// More wolf packs in forests, taigas and savannas.
 		net.fabricmc.fabric.api.biome.v1.BiomeModifications.addSpawn(

@@ -39,7 +39,7 @@ public final class Inventory {
 		}
 		double reach = boosted ? 2.5 : 1.0;
 		List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, mob.getBoundingBox().inflate(reach, 0.5, reach),
-			e -> e.isAlive() && !e.hasPickUpDelay() && !e.getItem().isEmpty());
+			e -> e.isAlive() && !e.hasPickUpDelay() && !e.getItem().isEmpty() && !Piglins.forPlayers(e));
 		for (ItemEntity entity : items) {
 			ItemStack stack = entity.getItem();
 			if (mob.canPickUpLoot() && mob.wantsToPickUp(level, stack)) {

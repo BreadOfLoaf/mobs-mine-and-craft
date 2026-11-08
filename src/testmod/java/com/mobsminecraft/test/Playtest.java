@@ -513,6 +513,7 @@ public class Playtest implements ModInitializer {
 			AiStats.reset();
 			com.mobsminecraft.ai.Flank.flanking = !this.scenario.name().equals("wave_classic");
 			com.mobsminecraft.ai.Squad.enabled = !this.scenario.name().equals("squad_off");
+			com.mobsminecraft.MobsMineAndCraft.DEBUG_TRADES = this.scenario.name().equals("piglin_barter");
 			AiStats.aiEnabled = !this.scenario.name().equals("crowd_vanilla") && !this.scenario.name().endsWith("_vanilla");
 			AiStats.timing = this.scenario.name().startsWith("crowd") || this.scenario.bot() == Behaviour.PLAYER;
 			this.tickNanos = 0;
@@ -753,6 +754,15 @@ public class Playtest implements ModInitializer {
 			if (this.scenario.name().equals("piglin_barter") && this.ticks == 1150) {
 				for (net.minecraft.world.entity.item.ItemEntity e : this.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new AABB(this.origin).inflate(30))) {
 					AiStats.add("on_ground:" + BuiltInRegistries.ITEM.getKey(e.getItem().getItem()).getPath(), e.getItem().getCount());
+					if (e.getOwner() instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin) {
+						AiStats.add("trade_stacks_on_ground");
+						AiStats.add("trade_items_on_ground", e.getItem().getCount());
+					}
+				}
+				for (net.minecraft.world.entity.item.ItemEntity e : this.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new AABB(this.origin).inflate(100),
+					e -> e.getOwner() instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin)) {
+					AiStats.add("trade_items_within_100", e.getItem().getCount());
+					if (!this.level.getBlockState(e.blockPosition()).isAir()) AiStats.add("trade_items_inside_blocks", e.getItem().getCount());
 				}
 			}
 			if (this.scenario.name().equals("seen_then_hide") && this.ticks == 110) {
