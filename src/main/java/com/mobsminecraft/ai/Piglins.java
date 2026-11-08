@@ -1,7 +1,6 @@
 package com.mobsminecraft.ai;
 
 import java.util.List;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -10,15 +9,12 @@ import net.minecraft.world.entity.monster.piglin.AbstractPiglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
 import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.alchemy.PotionContents;
-import net.minecraft.world.item.alchemy.Potions;
 
 /**
  * Nether manners: piglins and brutes leave a player in golden armour alone, zombified piglins stay neutral until
- * someone hits one of them, golden armour can be bartered like gold ingots, and some barters hand out gear for the End.
+ * someone hits one of them, golden armour can be bartered like gold ingots, and ender pearls turn up a little more often.
  */
 public final class Piglins {
 	private Piglins() {}
@@ -67,35 +63,15 @@ public final class Piglins {
 			|| stack.is(Items.GOLDEN_HORSE_ARMOR);
 	}
 
-	/** Now and then a barter turns up something for the End instead (about 15% of trades). */
-	public static List<ItemStack> endPrep(ServerLevel level, RandomSource r, List<ItemStack> vanilla) {
-		if (r.nextFloat() >= 0.15F) {
+	/**
+	 * Vanilla trades, with ender pearls a little more likely: vanilla gives one pearl about 2.1% of the time; an extra
+	 * 2.5% chance of swapping the trade for one pearl brings that to about 4.6%.
+	 */
+	public static List<ItemStack> morePearls(RandomSource r, List<ItemStack> vanilla) {
+		if (r.nextFloat() >= 0.025F || vanilla.stream().anyMatch(st -> st.is(Items.ENDER_PEARL))) {
 			return vanilla;
 		}
-		int roll = r.nextInt(100);
-		ItemStack s;
-		if (roll < 20) {
-			s = new ItemStack(Items.BLAZE_ROD, 1 + r.nextInt(2));
-		} else if (roll < 35) {
-			s = PotionContents.createItemStack(Items.POTION, Potions.SLOW_FALLING);
-		} else if (roll < 50) {
-			s = new ItemStack(Items.GOLDEN_CARROT, 3 + r.nextInt(4));
-		} else if (roll < 64) {
-			s = new ItemStack(Items.ARROW, 8 + r.nextInt(9));
-		} else if (roll < 74) {
-			s = new ItemStack(Items.SPECTRAL_ARROW, 4 + r.nextInt(5));
-		} else if (roll < 86) {
-			s = new ItemStack(Items.CARVED_PUMPKIN);
-		} else if (roll < 96) {
-			s = new ItemStack(Items.BED.pick(net.minecraft.world.item.DyeColor.WHITE));
-		} else {
-			s = new ItemStack(Items.ENDER_EYE);
-		}
-		com.mobsminecraft.debug.AiStats.add("barter_end:" + net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(s.getItem()).getPath());
-		return List.of(s);
-	}
-
-	static Item[] endPrepItems() {
-		return new Item[] {Items.BLAZE_ROD, Items.POTION, Items.GOLDEN_CARROT, Items.ARROW, Items.SPECTRAL_ARROW, Items.CARVED_PUMPKIN, Items.BED.pick(net.minecraft.world.item.DyeColor.WHITE), Items.ENDER_EYE};
+		com.mobsminecraft.debug.AiStats.add("barter_extra_pearl");
+		return List.of(new ItemStack(Items.ENDER_PEARL));
 	}
 }

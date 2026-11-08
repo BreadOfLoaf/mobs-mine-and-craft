@@ -708,9 +708,9 @@ public class Playtest implements ModInitializer {
 				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.GOLDEN_LEGGINGS));
 				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.GOLDEN_BOOTS));
 			}
-			if (this.scenario.name().equals("piglin_barter") && (this.ticks == 40 || this.ticks == 300 || this.ticks == 560 || this.ticks == 820)) {
+			if (this.scenario.name().equals("piglin_barter") && (this.ticks == 40 || this.ticks == 200 || this.ticks == 360 || this.ticks == 520)) {
 				// Each round: a piece of golden armour for one piglin, gold ingots for the others.
-				int round = this.ticks / 260;
+				int round = this.ticks / 160;
 				for (Tracked t : this.tracked) {
 					if (!t.mob.isAlive()) continue;
 					boolean armour = this.tracked.indexOf(t) == round % this.tracked.size();
@@ -727,15 +727,28 @@ public class Playtest implements ModInitializer {
 				for (Tracked t : this.tracked) {
 					if (!t.mob.isAlive()) continue;
 					for (net.minecraft.world.entity.EquipmentSlot slot : new net.minecraft.world.entity.EquipmentSlot[] {net.minecraft.world.entity.EquipmentSlot.HEAD,
-						net.minecraft.world.entity.EquipmentSlot.CHEST, net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET,
-						net.minecraft.world.entity.EquipmentSlot.OFFHAND}) {
+						net.minecraft.world.entity.EquipmentSlot.CHEST, net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET}) {
 						if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(t.mob.getItemBySlot(slot))) worn++;
 					}
+					if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(t.mob.getOffhandItem())) AiStats.add("golden_armour_still_being_admired");
 					if (t.mob instanceof net.minecraft.world.entity.monster.piglin.Piglin pg) {
 						for (int i = 0; i < pg.getInventory().getContainerSize(); i++) if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(pg.getInventory().getItem(i))) worn++;
 					}
 				}
 				AiStats.add(this.ticks == 30 ? "golden_armour_on_piglins_before" : "golden_armour_on_piglins_after", worn);
+				int babies = 0;
+				int babyWorn = 0;
+				for (Tracked t : this.tracked) {
+					if (!t.mob.isAlive() || !t.mob.isBaby()) continue;
+					babies++;
+					for (net.minecraft.world.entity.EquipmentSlot slot : new net.minecraft.world.entity.EquipmentSlot[] {net.minecraft.world.entity.EquipmentSlot.HEAD,
+						net.minecraft.world.entity.EquipmentSlot.CHEST, net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET,
+						net.minecraft.world.entity.EquipmentSlot.MAINHAND}) {
+						if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(t.mob.getItemBySlot(slot))) babyWorn++;
+					}
+				}
+				AiStats.add(this.ticks == 30 ? "babies" : "babies_end", babies);
+				AiStats.add(this.ticks == 30 ? "golden_armour_on_babies_before" : "golden_armour_on_babies_after", babyWorn);
 			}
 			if (this.scenario.name().equals("piglin_barter") && this.ticks == 1150) {
 				for (net.minecraft.world.entity.item.ItemEntity e : this.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new AABB(this.origin).inflate(30))) {
