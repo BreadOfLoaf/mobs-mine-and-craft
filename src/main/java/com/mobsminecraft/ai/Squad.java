@@ -119,15 +119,15 @@ public final class Squad {
 		List<SmartBrain> free = new ArrayList<>();
 		for (Mob m : level.getEntitiesOfClass(Mob.class, b.mob.getBoundingBox().inflate(24.0), m -> m != b.mob && m.isAlive() && m instanceof Enemy)) {
 			SmartBrain o = ((com.mobsminecraft.SmartMobHolder) m).mmc$getBrain();
-			if (o.squad != null && !o.squad.disbanded && o.squad.target == p && o.squad.members.size() < MAX_SIZE) {
+			if (o.squad != null && !o.squad.disbanded && o.squad.target == p && o.squad.members.size() < MAX_SIZE && !b.refusesTarget(p)) {
 				o.squad.add(b);
 				AiStats.add("squad_joined");
 				return;
 			}
-			if (o.squad == null && eligible(o) && m.distanceTo(b.mob) < 24.0F) free.add(o);
+			if (o.squad == null && eligible(o) && m.distanceTo(b.mob) < 24.0F && !o.refusesTarget(p)) free.add(o);
 		}
 		// Needs to have actually seen the player (not just heard of it) to call the others over.
-		if (free.isEmpty() || now - b.lastSeenTick > 100) return;
+		if (free.isEmpty() || now - b.lastSeenTick > 100 || b.refusesTarget(p)) return;
 		Squad s = new Squad(p, now);
 		s.add(b);
 		for (SmartBrain o : free) {

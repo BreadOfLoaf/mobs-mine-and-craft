@@ -579,6 +579,10 @@ public final class SmartBrain {
 		if (!(target instanceof Player) || !this.initialized) {
 			return false;
 		}
+		// Piglins and brutes leave a player in gold alone; zombified piglins stay neutral until hit.
+		if (Piglins.leavesAlone(this.mob, (Player) target)) {
+			return true;
+		}
 		Personality p = this.personality;
 		if (target == this.provokedBy && this.mob.tickCount < this.provokedUntil) {
 			return false;
@@ -598,6 +602,9 @@ public final class SmartBrain {
 
 	/** No target, but it knows roughly where a player was: go and look, then look around, then give up. */
 	private boolean investigate(ServerLevel level) {
+		if (this.knownPlayer != null && Piglins.leavesAlone(this.mob, this.knownPlayer)) {
+			return false;
+		}
 		if (!(this.mob instanceof Enemy) || this.knownPos == null || !this.personality.usesTricks() && this.personality != Personality.FIGHTER
 			|| this.personality.peaceful() || this.busyWithRole() || level.getGameTime() - this.knownTick > 400) {
 			this.investigateTicks = 0;
@@ -1167,7 +1174,8 @@ public final class SmartBrain {
 		if (this.initialized && this.personality == Personality.ENGINEER) {
 			// Engineers don't charge in: they set traps for a player they've seen or heard (not one hidden behind walls).
 			Player p = this.knownPlayer;
-			return p != null && p.isAlive() && level.getGameTime() - this.knownTick < 200 && p.distanceTo(this.mob) < 28.0F ? p : null;
+			return p != null && p.isAlive() && level.getGameTime() - this.knownTick < 200 && p.distanceTo(this.mob) < 28.0F
+				&& !Piglins.leavesAlone(this.mob, p) ? p : null;
 		}
 		if (this.initialized && this.busyWithRole()) {
 			LivingEntity attacker = this.mob.getLastHurtByMob();

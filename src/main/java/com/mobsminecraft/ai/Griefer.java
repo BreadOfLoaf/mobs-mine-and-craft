@@ -142,7 +142,8 @@ final class Griefer {
 			if (crowd != null) {
 				aim = crowd.position();
 				why = "griefer_tnt_mobs";
-			} else if (b.knownPlayer != null && b.knownPlayer.isAlive() && b.knownPlayer.distanceTo(mob) < 20.0F && b.knownPlayer.distanceTo(mob) > 4.0F) {
+			} else if (b.knownPlayer != null && b.knownPlayer.isAlive() && b.knownPlayer.distanceTo(mob) < 20.0F && b.knownPlayer.distanceTo(mob) > 4.0F
+				&& !Piglins.leavesAlone(mob, b.knownPlayer)) {
 				aim = b.knownPlayer.position();
 				why = "griefer_tnt_player";
 			} else {
@@ -154,6 +155,13 @@ final class Griefer {
 					double a = r.nextDouble() * Math.PI * 2;
 					aim = mob.position().add(Math.cos(a) * (7 + r.nextInt(6)), 0.0, Math.sin(a) * (7 + r.nextInt(6)));
 					why = "griefer_tnt_random";
+				}
+			}
+			// A piglin griefer won't blow up a player in gold (nor a zombified one a player who's left them alone).
+			for (net.minecraft.world.entity.player.Player pl : level.players()) {
+				if (pl.position().distanceToSqr(aim) < 121.0 && Piglins.leavesAlone(mob, pl)) {
+					com.mobsminecraft.debug.AiStats.add("griefer_tnt_spared_player");
+					return false;
 				}
 			}
 			throwTntAt(level, mob, aim);

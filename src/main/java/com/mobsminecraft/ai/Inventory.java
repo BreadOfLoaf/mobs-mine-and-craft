@@ -45,6 +45,10 @@ public final class Inventory {
 			if (mob.canPickUpLoot() && mob.wantsToPickUp(level, stack)) {
 				continue; // villagers and piglins handle their own pickups
 			}
+			// Piglins never pocket gold: that's for admiring and bartering.
+			if (mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin && (stack.is(net.minecraft.tags.ItemTags.PIGLIN_LOVED) || Piglins.isGoldenArmor(stack))) {
+				continue;
+			}
 			if (Wolves.isWildWolf(brain) && Wolves.equip(brain, stack)) {
 				mob.take(entity, 1);
 				stack.shrink(1);

@@ -233,6 +233,21 @@ public class Playtest implements ModInitializer {
 				+ ": do they craft gear to match, ladders and stairs, and build to their advantage?", (run, o) -> {},
 				mobs("zombie", 6, "skeleton", 2), 16, Behaviour.FIGHT));
 		}
+		// Nether manners (piglins are immune to zombifying here, since this is the Overworld).
+		add(new Scenario("piglins_gold", 1200, "Four piglins and two brutes next to a player in full golden armour: nobody should attack.",
+			(run, o) -> {}, mobs("piglin", 4, "piglin_brute", 2), 5, Behaviour.STAND));
+		add(new Scenario("piglins_plain", 1200, "The same piglins and brutes next to a player without gold (control: they attack).",
+			(run, o) -> {}, mobs("piglin", 4, "piglin_brute", 2), 5, Behaviour.STAND));
+		for (String g : new String[] {"gold", "plain", "plain_vanilla"}) {
+			add(new Scenario("piglin_only_" + g, 1200, "Four piglins (no brutes) next to a player, " + g + ".", (run, o) -> {}, mobs("piglin", 4), 5, Behaviour.STAND));
+			add(new Scenario("brute_only_" + g, 1200, "Two piglin brutes (no piglins) next to a player, " + g + ".", (run, o) -> {}, mobs("piglin_brute", 2), 5, Behaviour.STAND));
+		}
+		add(new Scenario("zombified_neutral", 1200, "Five zombified piglins around a player who leaves them alone: they stay neutral.",
+			(run, o) -> {}, mobs("zombified_piglin", 5), 5, Behaviour.STAND));
+		add(new Scenario("zombified_provoked", 1200, "Five zombified piglins around a player who fights: once hit, the group turns on them.",
+			(run, o) -> {}, mobs("zombified_piglin", 5), 5, Behaviour.FIGHT));
+		add(new Scenario("piglin_barter", 1200, "Golden armour and gold ingots thrown to four piglins: do they trade (armour included) instead of keeping it?",
+			(run, o) -> {}, mobs("piglin", 4), 4, Behaviour.SPECTATE));
 		add(new Scenario("bot_skills", 1800, "The player bot against a mixed group: does it time its swings, crit, block, shoot skeletons and creepers, eat, pillar?",
 			(run, o) -> {}, mobs("zombie", 5, "skeleton", 3, "creeper", 2, "spider", 1), 18, Behaviour.FIGHT));
 		add(new Scenario("wolves", 1200, "A sword-swinging bot provokes a wolf pack; a sword, chestplate and rotten flesh lie nearby.", (run, o) -> {},
@@ -498,7 +513,7 @@ public class Playtest implements ModInitializer {
 			AiStats.reset();
 			com.mobsminecraft.ai.Flank.flanking = !this.scenario.name().equals("wave_classic");
 			com.mobsminecraft.ai.Squad.enabled = !this.scenario.name().equals("squad_off");
-			AiStats.aiEnabled = !this.scenario.name().equals("crowd_vanilla");
+			AiStats.aiEnabled = !this.scenario.name().equals("crowd_vanilla") && !this.scenario.name().endsWith("_vanilla");
 			AiStats.timing = this.scenario.name().startsWith("crowd") || this.scenario.bot() == Behaviour.PLAYER;
 			this.tickNanos = 0;
 			com.mobsminecraft.ai.Flank.holdFire = !this.scenario.name().equals("wave_classic");
@@ -621,6 +636,9 @@ public class Playtest implements ModInitializer {
 			mob.snapTo(x, 121, z, this.level.getRandom().nextFloat() * 360.0F, 0.0F);
 			mob.finalizeSpawn(this.level, this.level.getCurrentDifficultyAt(mob.blockPosition()), net.minecraft.world.entity.EntitySpawnReason.COMMAND, null);
 			mob.setPersistenceRequired();
+			if (mob instanceof net.minecraft.world.entity.monster.piglin.AbstractPiglin piglin) {
+				piglin.setImmuneToZombification(true);
+			}
 			mob.addTag("playtest");
 			mob.addTag(this.runTag);
 			this.level.addFreshEntityWithPassengers(mob);
@@ -682,6 +700,47 @@ public class Playtest implements ModInitializer {
 			if (this.scenario.name().equals("stealth_noisy") && this.ticks % 40 == 0) {
 				// Mining inside the room: loud.
 				com.mobsminecraft.ai.Awareness.noise(this.bot.player, this.bot.player.position(), 16.0);
+			}
+			if ((this.scenario.name().equals("piglins_gold") || this.scenario.name().endsWith("_only_gold")) && this.ticks == 1) {
+				var pl = this.bot.player;
+				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new ItemStack(Items.GOLDEN_HELMET));
+				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new ItemStack(Items.GOLDEN_CHESTPLATE));
+				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new ItemStack(Items.GOLDEN_LEGGINGS));
+				pl.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new ItemStack(Items.GOLDEN_BOOTS));
+			}
+			if (this.scenario.name().equals("piglin_barter") && (this.ticks == 40 || this.ticks == 300 || this.ticks == 560 || this.ticks == 820)) {
+				// Each round: a piece of golden armour for one piglin, gold ingots for the others.
+				int round = this.ticks / 260;
+				for (Tracked t : this.tracked) {
+					if (!t.mob.isAlive()) continue;
+					boolean armour = this.tracked.indexOf(t) == round % this.tracked.size();
+					ItemStack gift = armour ? new ItemStack(new net.minecraft.world.item.Item[] {Items.GOLDEN_HELMET, Items.GOLDEN_CHESTPLATE, Items.GOLDEN_LEGGINGS, Items.GOLDEN_BOOTS}[round % 4])
+						: new ItemStack(Items.GOLD_INGOT);
+					net.minecraft.world.entity.item.ItemEntity e = new net.minecraft.world.entity.item.ItemEntity(this.level, t.mob.getX(), t.mob.getY() + 0.5, t.mob.getZ(), gift);
+					this.level.addFreshEntity(e);
+					AiStats.add(armour ? "given:golden_armour" : "given:gold_ingot");
+				}
+			}
+			if (this.scenario.name().equals("piglin_barter") && (this.ticks == 30 || this.ticks == 1150)) {
+				// Golden armour pieces worn (they spawn with some) and carried, before the gifts and at the end.
+				int worn = 0;
+				for (Tracked t : this.tracked) {
+					if (!t.mob.isAlive()) continue;
+					for (net.minecraft.world.entity.EquipmentSlot slot : new net.minecraft.world.entity.EquipmentSlot[] {net.minecraft.world.entity.EquipmentSlot.HEAD,
+						net.minecraft.world.entity.EquipmentSlot.CHEST, net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET,
+						net.minecraft.world.entity.EquipmentSlot.OFFHAND}) {
+						if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(t.mob.getItemBySlot(slot))) worn++;
+					}
+					if (t.mob instanceof net.minecraft.world.entity.monster.piglin.Piglin pg) {
+						for (int i = 0; i < pg.getInventory().getContainerSize(); i++) if (com.mobsminecraft.ai.PiglinsAccess.isGoldenArmor(pg.getInventory().getItem(i))) worn++;
+					}
+				}
+				AiStats.add(this.ticks == 30 ? "golden_armour_on_piglins_before" : "golden_armour_on_piglins_after", worn);
+			}
+			if (this.scenario.name().equals("piglin_barter") && this.ticks == 1150) {
+				for (net.minecraft.world.entity.item.ItemEntity e : this.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new AABB(this.origin).inflate(30))) {
+					AiStats.add("on_ground:" + BuiltInRegistries.ITEM.getKey(e.getItem().getItem()).getPath(), e.getItem().getCount());
+				}
 			}
 			if (this.scenario.name().equals("seen_then_hide") && this.ticks == 110) {
 				this.bot.teleport(Vec3.atBottomCenterOf(this.origin.above().east(3)));
