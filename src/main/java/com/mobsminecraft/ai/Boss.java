@@ -66,6 +66,8 @@ public final class Boss {
 		BlockPos channelSpot;
 		int channelTicks;
 		float channelHealth;
+		/** Where the dragon has been, once a second (for spotting a dragon stuck circling one spot). */
+		final java.util.ArrayDeque<Vec3> trail = new java.util.ArrayDeque<>();
 	}
 
 	private static final Map<UUID, State> STATES = new HashMap<>();
@@ -124,7 +126,18 @@ public final class Boss {
 	 */
 	private static void relink(ServerLevel level, EnderDragon dragon) {
 		var fight = level.getDragonFight();
-		if (fight == null || dragon.getDragonFight() != null || !dragon.isAlive()) {
+		if (fight == null || !dragon.isAlive()) {
+			return;
+		}
+		// Its idea of where the arena is must match the fight's, or it circles and lands around the wrong spot.
+		BlockPos origin = ((com.mobsminecraft.mixin.EnderDragonFightAccessor) (Object) fight).mmc$origin();
+		if (origin != null && !origin.equals(dragon.getFightOrigin())) {
+			com.mobsminecraft.MobsMineAndCraft.LOGGER.info("[mobsmineandcraft] Ender dragon's arena centre was {}, the fight's is {}: corrected", dragon.getFightOrigin(), origin);
+			dragon.setFightOrigin(origin);
+			dragon.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+			AiStats.add("boss_origin_fixed");
+		}
+		if (dragon.getDragonFight() != null) {
 			return;
 		}
 		var access = (com.mobsminecraft.mixin.EnderDragonFightAccessor) (Object) fight;
@@ -142,6 +155,50 @@ public final class Boss {
 		AiStats.add("boss_dragon_relinked");
 	}
 
+	/**
+	 * A dragon that has stayed in one small patch of sky for half a minute while a player is in the arena is stuck
+	 * (whatever the reason): put its arena centre right and send it at the player, or in to land, as it would.
+	 */
+	private static void watchdog(ServerLevel level, EnderDragon dragon, State s, Player player, RandomSource r) {
+		s.trail.addLast(dragon.position());
+		while (s.trail.size() > 30) s.trail.removeFirst();
+		var phase = dragon.getPhaseManager().getCurrentPhase().getPhase();
+		boolean flying = phase == EnderDragonPhase.HOLDING_PATTERN || phase == EnderDragonPhase.HOVERING
+			|| phase == EnderDragonPhase.LANDING_APPROACH || phase == EnderDragonPhase.LANDING;
+		if (s.trail.size() < 30 || player == null || !flying) {
+			return;
+		}
+		Vec3 c = Vec3.ZERO;
+		for (Vec3 p : s.trail) c = c.add(p);
+		c = c.scale(1.0 / s.trail.size());
+		double spread = 0;
+		for (Vec3 p : s.trail) spread = Math.max(spread, p.distanceTo(c));
+		if (spread > 28.0) {
+			return;
+		}
+		var fight = level.getDragonFight();
+		BlockPos origin = fight != null ? ((com.mobsminecraft.mixin.EnderDragonFightAccessor) (Object) fight).mmc$origin() : BlockPos.ZERO;
+		com.mobsminecraft.MobsMineAndCraft.LOGGER.info(
+			"[mobsmineandcraft] Ender dragon stuck circling (within {} blocks of {} for 30 s, phase {}); its arena centre was {}, the fight's is {}, linked {}, crystals {}. Sending it back into the fight.",
+			Math.round(spread), BlockPos.containing(c), phase, dragon.getFightOrigin(), origin, dragon.getDragonFight() != null,
+			fight == null ? -1 : fight.aliveCrystals());
+		if (origin != null) {
+			dragon.setFightOrigin(origin);
+		}
+		if (fight != null && dragon.getDragonFight() == null) {
+			((com.mobsminecraft.mixin.EnderDragonFightAccessor) (Object) fight).mmc$setDragonUUID(dragon.getUUID());
+			dragon.setDragonFight(fight);
+		}
+		if (r.nextInt(3) == 0 && phase != EnderDragonPhase.LANDING_APPROACH && phase != EnderDragonPhase.LANDING) {
+			dragon.getPhaseManager().setPhase(EnderDragonPhase.LANDING_APPROACH);
+		} else {
+			dragon.getPhaseManager().setPhase(EnderDragonPhase.STRAFE_PLAYER);
+			dragon.getPhaseManager().getPhase(EnderDragonPhase.STRAFE_PLAYER).setTarget(player);
+		}
+		s.trail.clear();
+		AiStats.add("boss_unstuck");
+	}
+
 	// ------------------------------------------------------------------ the dragon
 
 	private static void tickDragon(ServerLevel level, EnderDragon dragon) {
@@ -152,6 +209,9 @@ public final class Boss {
 		RandomSource r = dragon.getRandom();
 		Player player = target(level, dragon);
 		crystals(level, dragon, s, r);
+		if (level.getGameTime() % 20 == 0) {
+			watchdog(level, dragon, s, player, r);
+		}
 		if (player == null) {
 			return;
 		}

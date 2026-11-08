@@ -86,6 +86,11 @@ final class EndTest {
 			cmd("execute in minecraft:the_end run summon ender_dragon 0 100 0");
 			EnderDragon d = this.end.getDragons().isEmpty() ? null : this.end.getDragons().get(0);
 			note("swapped in an untracked dragon: linked=%s", d != null && d.getDragonFight() != null);
+		}
+		if (this.ticks == 1560) {
+			// And a wrong arena centre, so it circles somewhere else (as a stuck dragon would).
+			for (EnderDragon d : this.end.getDragons()) d.setFightOrigin(new net.minecraft.core.BlockPos(120, 0, 120));
+			note("gave the dragon a wrong arena centre (120, 120)");
 			this.phases.clear();
 			this.linked = 0;
 			this.unlinked = 0;
