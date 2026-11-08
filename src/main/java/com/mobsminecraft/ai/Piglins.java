@@ -24,6 +24,10 @@ public final class Piglins {
 
 	/** True if this mob should leave this player alone (and not go after them at all). */
 	public static boolean leavesAlone(Mob mob, Player player) {
+		// Endermen: neutral as in vanilla (and rebels are busy with the dragon).
+		if (Boss.leavesAlone(mob, player)) {
+			return true;
+		}
 		if (hurtBy(mob, player)) {
 			return false;
 		}

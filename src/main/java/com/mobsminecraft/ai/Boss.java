@@ -62,7 +62,7 @@ public final class Boss {
 	private static final class State {
 		int attackCooldown = 80;
 		int buildCooldown = 200;
-		int crystalCooldown = 1200;
+		int crystalCooldown = 2400;
 		BlockPos channelSpot;
 		int channelTicks;
 		float channelHealth;
@@ -77,6 +77,9 @@ public final class Boss {
 			if (dragons.size() > 1) {
 				onlyOne(level, dragons);
 				dragons = level.getDragons();
+			}
+			if (dragons.size() == 1) {
+				relink(level, dragons.get(0));
 			}
 			STATES.keySet().removeIf(id -> level.getEntity(id) == null);
 		}
@@ -113,6 +116,30 @@ public final class Boss {
 		}
 		com.mobsminecraft.MobsMineAndCraft.LOGGER.info("[mobsmineandcraft] Removed {} extra ender dragon(s); kept {}", removed, keep.getUUID());
 		AiStats.add("boss_extra_dragons_removed", removed);
+	}
+
+	/**
+	 * A dragon the fight isn't tracking only circles (no dives, no landing, no full arena). Make the fight track it
+	 * and link it to the arena, so it behaves like the real one.
+	 */
+	private static void relink(ServerLevel level, EnderDragon dragon) {
+		var fight = level.getDragonFight();
+		if (fight == null || dragon.getDragonFight() != null || !dragon.isAlive()) {
+			return;
+		}
+		var access = (com.mobsminecraft.mixin.EnderDragonFightAccessor) (Object) fight;
+		access.mmc$setDragonUUID(dragon.getUUID());
+		dragon.setDragonFight(fight);
+		if (access.mmc$origin() != null) {
+			dragon.setFightOrigin(access.mmc$origin());
+		}
+		// Back to its normal routine (a stray dragon is often stuck hovering or circling in place).
+		var phase = dragon.getPhaseManager().getCurrentPhase().getPhase();
+		if (phase == EnderDragonPhase.HOVERING || phase == EnderDragonPhase.HOLDING_PATTERN) {
+			dragon.getPhaseManager().setPhase(EnderDragonPhase.HOLDING_PATTERN);
+		}
+		com.mobsminecraft.MobsMineAndCraft.LOGGER.info("[mobsmineandcraft] Linked ender dragon {} back to the dragon fight", dragon.getUUID());
+		AiStats.add("boss_dragon_relinked");
 	}
 
 	// ------------------------------------------------------------------ the dragon
@@ -289,7 +316,7 @@ public final class Boss {
 			// Any hit breaks its concentration.
 			if (dragon.getHealth() < s.channelHealth - 0.01F) {
 				s.channelSpot = null;
-				s.crystalCooldown = 600;
+				s.crystalCooldown = 1800;
 				level.playSound(null, dragon.blockPosition(), SoundEvents.ENDER_DRAGON_HURT, SoundSource.HOSTILE, 3.0F, 0.7F);
 				AiStats.add("boss_crystal_interrupted");
 				return;
@@ -311,7 +338,7 @@ public final class Boss {
 				level.playSound(null, s.channelSpot, SoundEvents.END_PORTAL_SPAWN, SoundSource.HOSTILE, 2.0F, 1.4F);
 				AiStats.add("boss_crystal_rebuilt");
 				s.channelSpot = null;
-				s.crystalCooldown = 1200 + r.nextInt(600);
+				s.crystalCooldown = 3600 + r.nextInt(2400);
 			}
 			return;
 		}

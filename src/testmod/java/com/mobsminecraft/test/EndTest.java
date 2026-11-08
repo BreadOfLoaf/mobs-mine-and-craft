@@ -72,9 +72,36 @@ final class EndTest {
 		cmd("tick sprint 3000");
 	}
 
+	private final Map<String, Integer> phases = new TreeMap<>();
+	private int linked;
+	private int unlinked;
+	private final Map<String, Integer> endermen = new TreeMap<>();
+
 	private void tick() {
 		this.ticks++;
 		this.bot.tick();
+		if (this.ticks == 1500) {
+			// Like a stray duplicate: the real dragon gone, an untracked one in its place.
+			for (EnderDragon d : this.end.getDragons()) d.discard();
+			cmd("execute in minecraft:the_end run summon ender_dragon 0 100 0");
+			EnderDragon d = this.end.getDragons().isEmpty() ? null : this.end.getDragons().get(0);
+			note("swapped in an untracked dragon: linked=%s", d != null && d.getDragonFight() != null);
+			this.phases.clear();
+			this.linked = 0;
+			this.unlinked = 0;
+		}
+		if (this.ticks > 320 && this.ticks % 20 == 0) {
+			for (EnderDragon d : this.end.getDragons()) {
+				this.phases.merge(d.getPhaseManager().getCurrentPhase().getPhase().toString(), 1, Integer::sum);
+				if (d.getDragonFight() != null) this.linked++; else this.unlinked++;
+			}
+			for (Enderman e : this.end.getEntitiesOfClass(Enderman.class, this.bot.player.getBoundingBox().inflate(32))) {
+				var b = ((com.mobsminecraft.SmartMobHolder) e).mmc$getBrain();
+				String near = e.distanceTo(this.bot.player) < 6 ? "near" : "far";
+				if (near.equals("near")) this.endermen.merge("ALL_NEAR", 1, Integer::sum); else this.endermen.merge("ALL_FAR", 1, Integer::sum);
+				this.endermen.merge(b.personalityName() + "/" + b.activity() + "/" + near, 1, Integer::sum);
+			}
+		}
 		if (this.ticks == 300) {
 			this.dragonsAtStart = this.end.getDragons().size();
 			note("dragons after the fight starts: %d", this.dragonsAtStart);
@@ -122,6 +149,8 @@ final class EndTest {
 
 	private void finish() {
 		note("dragons at the end: %d", this.end.getDragons().size());
+		note("dragon phases after the swap (samples): %s; linked to the fight %d, not linked %d", this.phases, this.linked, this.unlinked);
+		note("endermen within 32 (personality/activity/near<6): %s", this.endermen);
 		note("bot took %d hits: %s", this.hits, this.damageBy);
 		int rebels = 0, rebelsOnPlayer = 0;
 		for (Enderman e : this.end.getEntitiesOfClass(Enderman.class, new AABB(-120, 0, -120, 120, 256, 120))) {

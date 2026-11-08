@@ -100,7 +100,8 @@ final class Roles {
 		if (!(mob instanceof Enemy) || b.trapPlan != null) {
 			return false;
 		}
-		if (b.knownPos == null || level.getGameTime() - b.knownTick > 2400) {
+		boolean ignore = b.knownPlayer != null && Piglins.leavesAlone(mob, b.knownPlayer);
+		if (ignore || b.knownPos == null || level.getGameTime() - b.knownTick > 2400) {
 			// Nobody known about: patrol, and lay a tripwire ambush along the way every so often.
 			if (b.trapCooldown == 0 && mob.onGround() && mob.getRandom().nextInt(40) == 0) {
 				b.engineerAmbush = true;

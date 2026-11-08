@@ -108,7 +108,8 @@ final class Personalities {
 		if (b.giftsLeft <= 0 || b.giftCooldown > 0) {
 			return false;
 		}
-		Player player = nearestPlayer(level, mob, 24.0);
+		// Endermen don't trail after the player: they gift when the player comes near.
+		Player player = nearestPlayer(level, mob, mob instanceof net.minecraft.world.entity.monster.Enderman ? 6.0 : 24.0);
 		if (player == null) {
 			return false;
 		}
@@ -552,7 +553,8 @@ final class Personalities {
 	 */
 	private static boolean builderFight(SmartBrain b, ServerLevel level, boolean griefing) {
 		Mob mob = b.mob;
-		Player player = nearestPlayer(level, mob, 24.0);
+		Player near = nearestPlayer(level, mob, 24.0);
+		final Player player = near != null && Piglins.leavesAlone(mob, near) ? null : near;
 		if (b.wallPlan != null) {
 			// The wall gets laid by the brain's wall step this tick; just stay put.
 			b.holdStill();
