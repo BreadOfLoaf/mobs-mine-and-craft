@@ -293,6 +293,13 @@ public class Playtest implements ModInitializer {
 					.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), 1))
 					.then(Commands.argument("runs", IntegerArgumentType.integer(1, 20))
 						.executes(ctx -> queue(StringArgumentType.getString(ctx, "scenario"), IntegerArgumentType.getInteger(ctx, "runs")))))));
+		EndTest.register();
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
+			Commands.literal("endtest").executes(ctx -> {
+				EndTest.active = new EndTest(ctx.getSource().getServer());
+				EndTest.active.start();
+				return 1;
+			})));
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
 			Commands.literal("train")
 				.then(Commands.literal("start").then(Commands.argument("generations", IntegerArgumentType.integer(1, 200))

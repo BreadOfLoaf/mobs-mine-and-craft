@@ -37,7 +37,7 @@ final class Personalities {
 	/** Runs the personality's own behaviour. Returns true if it took over the mob this tick. */
 	static boolean tick(SmartBrain b, ServerLevel level, LivingEntity target, boolean griefing) {
 		return switch (b.personality) {
-			case GIFTER -> gifter(b, level);
+			case GIFTER, END_GIFTER -> gifter(b, level);
 			case MINEMAN -> mineman(b, level, griefing);
 			case IMPOSTER -> imposter(b, level);
 			case HERO -> hero(b, level, target, griefing);
@@ -123,7 +123,7 @@ final class Personalities {
 			level.sendParticles(ParticleTypes.HEART, mob.getX(), mob.getEyeY() + 0.5, mob.getZ(), 1, 0.2, 0.1, 0.2, 0.0);
 		}
 		RandomSource r = mob.getRandom();
-		toss(level, mob, player, gift(level, r));
+		toss(level, mob, player, b.personality == Personality.END_GIFTER ? Boss.endGift(r) : gift(level, r));
 		level.sendParticles(ParticleTypes.HAPPY_VILLAGER, mob.getX(), mob.getEyeY(), mob.getZ(), 8, 0.4, 0.3, 0.4, 0.0);
 		b.giftsLeft--;
 		b.giftCooldown = 1200 + r.nextInt(1800);

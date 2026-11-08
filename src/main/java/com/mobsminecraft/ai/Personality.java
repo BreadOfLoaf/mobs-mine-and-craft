@@ -37,7 +37,11 @@ public enum Personality {
 	/** Won't fight. Walks up to the player and gives them things, now and then enchanted diamond gear. */
 	GIFTER,
 	/** Wants chaos: breaks as many blocks as it can, lights TNT whoever is near, builds ugly dirt huts. */
-	GRIEFER;
+	GRIEFER,
+	/** The ender dragon: projectiles of every kind, walls near the player, rebuilds crystals (see Boss). */
+	BOSS,
+	/** Endermen who help: bring the player golden apples, arrows, diamonds and healing potions. */
+	END_GIFTER;
 
 	private static final String TAG_PREFIX = MobsMineAndCraft.MOD_ID + ".personality.";
 	private static final Identifier IMPOSTER_HEALTH = Identifier.fromNamespaceAndPath(MobsMineAndCraft.MOD_ID, "imposter_health");
@@ -65,6 +69,12 @@ public enum Personality {
 	}
 
 	private static Personality roll(Mob mob, RandomSource r) {
+		if (mob instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon) {
+			return BOSS;
+		}
+		if (mob instanceof net.minecraft.world.entity.monster.Enderman && r.nextFloat() < 0.15F) {
+			return END_GIFTER;
+		}
 		if (mob instanceof net.minecraft.world.entity.animal.wolf.Wolf) {
 			return TACTICIAN; // wild wolves are all tacticians
 		}
@@ -95,7 +105,7 @@ public enum Personality {
 
 	/** Mobs that don't want to fight the player at all. */
 	boolean peaceful() {
-		return this == GIFTER || this == IMPOSTER || this == MINEMAN;
+		return this == GIFTER || this == IMPOSTER || this == MINEMAN || this == END_GIFTER;
 	}
 
 	/** Mobs that get on with their job (building, crafting) and only fight a player who attacks them. */
@@ -122,7 +132,8 @@ public enum Personality {
 				b.combatCrafter = enemy && BlockWork.canBuild(mob);
 				b.combatCraftCooldown = 40 + r.nextInt(100);
 			}
-			case FIGHTER, GIFTER -> {
+			case BOSS -> {}
+			case FIGHTER, GIFTER, END_GIFTER -> {
 				noCrafting(b);
 				noBuilding(b);
 				b.supporter = false;

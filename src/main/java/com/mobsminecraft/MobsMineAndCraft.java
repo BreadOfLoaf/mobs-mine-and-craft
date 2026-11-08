@@ -28,6 +28,12 @@ public class MobsMineAndCraft implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		// The ender dragon's Boss personality, rebel Endermen, and only ever one dragon.
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_LEVEL_TICK.register(level -> {
+			if (level.dimension() == net.minecraft.world.level.Level.END) {
+				com.mobsminecraft.ai.Boss.tickEnd(level);
+			}
+		});
 		// Piglin trades are for the player: nothing (fire, lava, explosions, cactus) destroys them while they lie there.
 		net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents.ENTITY_LOAD.register((entity, level) -> {
 			if (entity instanceof net.minecraft.world.entity.item.ItemEntity item && com.mobsminecraft.ai.Piglins.forPlayers(item)) {

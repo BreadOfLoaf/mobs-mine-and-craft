@@ -566,6 +566,8 @@ public final class SmartBrain {
 			case IMPOSTER -> net.minecraft.ChatFormatting.DARK_PURPLE;
 			case HERO -> net.minecraft.ChatFormatting.YELLOW;
 			case GIFTER -> net.minecraft.ChatFormatting.LIGHT_PURPLE;
+			case END_GIFTER -> net.minecraft.ChatFormatting.DARK_PURPLE;
+			case BOSS -> net.minecraft.ChatFormatting.DARK_RED;
 			case GRIEFER -> net.minecraft.ChatFormatting.DARK_GREEN;
 		};
 		this.mob.setCustomName(net.minecraft.network.chat.Component.literal(name).withStyle(color));
@@ -578,6 +580,10 @@ public final class SmartBrain {
 	public boolean refusesTarget(LivingEntity target) {
 		if (!(target instanceof Player) || !this.initialized) {
 			return false;
+		}
+		// Rebel Endermen side with the player against the dragon.
+		if (Boss.leavesAlone(this.mob, (Player) target)) {
+			return true;
 		}
 		// Piglins and brutes leave a player in gold alone; zombified piglins stay neutral until hit.
 		if (Piglins.leavesAlone(this.mob, (Player) target)) {
@@ -693,7 +699,7 @@ public final class SmartBrain {
 		if (this.initialized) {
 			this.personality = Personality.valueOf(name.toUpperCase());
 			Personality.apply(this, this.mob.getRandom());
-			if (this.personality == Personality.GIFTER) {
+			if (this.personality == Personality.GIFTER || this.personality == Personality.END_GIFTER) {
 				this.giftsLeft = 4;
 			}
 		}
@@ -793,7 +799,7 @@ public final class SmartBrain {
 		if (this.knightOf != null) {
 			this.shieldWall = true;
 		}
-		if (this.personality == Personality.GIFTER) {
+		if (this.personality == Personality.GIFTER || this.personality == Personality.END_GIFTER) {
 			this.giftsLeft = 3 + r.nextInt(4);
 		}
 		if (this.personality == Personality.GIFTER || this.personality == Personality.MINEMAN) {
