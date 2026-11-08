@@ -299,7 +299,12 @@ public class Playtest implements ModInitializer {
 				EndTest.active = new EndTest(ctx.getSource().getServer());
 				EndTest.active.start();
 				return 1;
-			})));
+			}).then(Commands.literal("observe").then(Commands.argument("pos", net.minecraft.commands.arguments.coordinates.Vec3Argument.vec3(false)).executes(ctx -> {
+				EndTest.active = new EndTest(ctx.getSource().getServer());
+				EndTest.active.observeAt = net.minecraft.commands.arguments.coordinates.Vec3Argument.getVec3(ctx, "pos");
+				EndTest.active.start();
+				return 1;
+			})))));
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
 			Commands.literal("train")
 				.then(Commands.literal("start").then(Commands.argument("generations", IntegerArgumentType.integer(1, 200))

@@ -45,6 +45,9 @@ final class EndTest {
 		});
 	}
 
+	/** Observe mode: a player at this spot, nothing scripted, just a log of what the dragon does. */
+	Vec3 observeAt;
+
 	EndTest(MinecraftServer server) {
 		this.server = server;
 		this.end = server.getLevel(Level.END);
@@ -62,6 +65,13 @@ final class EndTest {
 
 	void start() {
 		AiStats.reset();
+		if (this.observeAt != null) {
+			cmd("execute in minecraft:the_end run forceload add -64 -64 64 64");
+			this.end.getChunk((int) Math.floor(this.observeAt.x) >> 4, (int) Math.floor(this.observeAt.z) >> 4);
+			this.bot = Bot.spawn(this.server, this.end, "Observer", this.observeAt);
+			PlayerBrain.giveKit(this.bot);
+			return;
+		}
 		cmd("gamerule mob_griefing true");
 		cmd("difficulty normal");
 		cmd("execute in minecraft:the_end run forceload add -64 -64 64 64");
@@ -73,6 +83,7 @@ final class EndTest {
 	}
 
 	private final Map<String, Integer> phases = new TreeMap<>();
+	private String lastPhase = "";
 	private int linked;
 	private int unlinked;
 	private final Map<String, Integer> endermen = new TreeMap<>();
@@ -80,6 +91,35 @@ final class EndTest {
 	private void tick() {
 		this.ticks++;
 		this.bot.tick();
+		if (this.observeAt != null) {
+			for (EnderDragon d : this.end.getDragons()) {
+				String ph = d.getPhaseManager().getCurrentPhase().getPhase().toString();
+				if (!ph.equals(this.lastPhase)) {
+					note("t=%5.1fs phase -> %s at (%.0f, %.0f, %.0f), %.0f blocks from the player", this.ticks / 20.0, ph, d.getX(), d.getY(), d.getZ(), d.distanceTo(this.bot.player));
+					this.lastPhase = ph;
+					this.phases.merge(ph, 1, Integer::sum);
+				}
+			}
+			if (this.ticks >= 2400) {
+				note("mode changes in 2 minutes: %s; the player took %d hits: %s", this.phases, this.hits, this.damageBy);
+			}
+			if (false) {
+				for (EnderDragon d : this.end.getDragons()) {
+					var fight = this.end.getDragonFight();
+					note("t=%3ds dragon %s phase=%s pos=(%.0f, %.0f, %.0f) origin=%s linked=%s noPhysics=%s hc=%s vc=%s health=%.0f crystals=%d",
+						this.ticks / 20, d.getUUID().toString().substring(0, 8), d.getPhaseManager().getCurrentPhase().getPhase(), d.getX(), d.getY(), d.getZ(),
+						d.getFightOrigin(), d.getDragonFight() != null, d.noPhysics, d.horizontalCollision, d.verticalCollision, d.getHealth(),
+						fight == null ? -1 : fight.aliveCrystals());
+				}
+			}
+			if (this.ticks >= 2400) {
+				note("observe done");
+				this.bot.remove(this.server);
+				Playtest.LOG.info("[endtest] DONE");
+				active = null;
+			}
+			return;
+		}
 		if (this.ticks == 1500) {
 			// Like a stray duplicate: the real dragon gone, an untracked one in its place.
 			for (EnderDragon d : this.end.getDragons()) d.discard();
